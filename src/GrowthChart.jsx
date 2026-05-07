@@ -10,11 +10,11 @@ const fmtDateLocal = d =>
 const fmtShort = d =>
   d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-// Seed data — used only when localStorage is empty
+// Seed data — sourced from Notion Weight Log, dates are authoritative
 const SEED_ACTUAL = [
-  { week: 9.3,  luke: 15.0, leia: 11.0 },  // pickup estimate
-  { week: 9.6,  luke: 17.3, leia: 11.8 },  // vet Apr 27
-  { week: 10.1, luke: 18.4, leia: 13.0 },  // home May 1
+  { week: 9.71,  luke: 15.0, leia: 11.0 },  // pickup estimate Apr 25
+  { week: 10.0,  luke: 17.3, leia: 11.8 },  // vet Apr 27
+  { week: 10.57, luke: 18.4, leia: 13.0 },  // home May 1
 ];
 
 // Single shared band: 35–60 lbs adult
@@ -45,7 +45,7 @@ const bandPath = (lo,hi) => {
 
 const X_TICKS = [10,14,18,22,26,30,36,42,48,52];
 const Y_TICKS = [10,20,30,40,50,60];
-const STORAGE_KEY = 'puppy-weights:v1';
+const STORAGE_KEY = 'puppy-weights:v2';
 
 const lastWith = (rows, dog) => {
   for (let i = rows.length - 1; i >= 0; i--) {
