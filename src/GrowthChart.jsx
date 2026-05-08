@@ -75,16 +75,20 @@ const bandPath = (lo, hi, xS) => {
 
 // ── Logistic trend fit: W(t) = A / (1 + exp(-k*(t-t0))) ─────────────────────
 // Grid-searches for the best asymptote A per dog via min SSR in original space.
+// A birth anchor at (0, ~0.85 lb) is always included so the S-curve starts
+// near 0 rather than extrapolating backward through the steep data-point slope.
 // aMin enforces a biologically plausible lower bound: at current age, the puppy
 // can't already be >maxFrac of adult weight (35% at 10w, rises to 90% at 30w+).
+const BIRTH_ANCHOR = { t: 0, w: 0.85 };
 const fitLogisticFree = pts => {
+  const allPts = [BIRTH_ANCHOR, ...pts];
   const maxW = Math.max(...pts.map(p => p.w));
   const latestT = Math.max(...pts.map(p => p.t));
   const maxFrac = Math.min(0.90, Math.max(0.28, (latestT - 8) * 0.031 + 0.28));
   const aMin = Math.max(maxW / maxFrac, maxW + 3);
   let best = null;
   for (let A = aMin; A <= 80; A += 0.5) {
-    const valid = pts.filter(p => p.w < A * 0.99);
+    const valid = allPts.filter(p => p.w < A * 0.99);
     if (valid.length < 2) continue;
     const xs = valid.map(p => p.t);
     const ys = valid.map(p => {
@@ -102,7 +106,7 @@ const fitLogisticFree = pts => {
     if (k <= 0) continue;
     const t0 = mX + mY / k;
     const fn = t => A / (1 + Math.exp(-k * (t - t0)));
-    const ssr = pts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
+    const ssr = allPts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
     if (best === null || ssr < best.ssr) best = { fn, A, ssr };
   }
   return best ?? null;
