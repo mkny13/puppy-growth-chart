@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // ── Date helpers ────────────────────────────────────────────────────────────
 const BIRTH = new Date(2026, 1, 16);
@@ -227,6 +227,8 @@ export default function GrowthChart() {
   const [sysDark, setSysDark] = useState(
     () => window.matchMedia('(prefers-color-scheme: dark)').matches
   );
+  const svgRef = useRef(null);
+  const tipTimerRef = useRef(null);
 
   // ── Effects ──
   useEffect(() => {
@@ -329,6 +331,49 @@ export default function GrowthChart() {
   };
 
   const handleDelete = idx => setActual(prev => prev.filter((_, i) => i !== idx));
+
+  const handleChartPoint = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const svgX = (clientX - rect.left) * (VW / rect.width);
+    const svgY = (clientY - rect.top) * (VH / rect.height);
+    if (svgX < PL || svgX > PL + CW || svgY < PT || svgY > PT + CH) {
+      setTip(null); return;
+    }
+    const hoverWeek = viewMin + ((svgX - PL) / CW) * (viewMax - viewMin);
+    // Snap to nearest data row by horizontal distance
+    const SNAP_PX = 16;
+    let snapEntry = null, bestDist = SNAP_PX;
+    for (const d of actual) {
+      if (d.week < viewMin || d.week > viewMax) continue;
+      const dx = Math.abs(xS(d.week) - svgX);
+      if (dx < bestDist) { bestDist = dx; snapEntry = d; }
+    }
+    const displayWeek = snapEntry?.week ?? hoverWeek;
+    const lukeVal = snapEntry?.luke ?? (dogFits.luke?.fn(displayWeek) ?? null);
+    const leiaVal = snapEntry?.leia ?? (dogFits.leia?.fn(displayWeek) ?? null);
+    if (lukeVal == null && leiaVal == null) { setTip(null); return; }
+    setTip({
+      svgX: xS(displayWeek), svgY, week: displayWeek,
+      luke: lukeVal, lukeIsActual: snapEntry != null && snapEntry.luke != null,
+      leia: leiaVal, leiaIsActual: snapEntry != null && snapEntry.leia != null,
+    });
+  };
+
+  const handleChartMove = e => handleChartPoint(e.clientX, e.clientY);
+
+  const handleChartTouch = e => {
+    if (e.touches.length > 0) {
+      clearTimeout(tipTimerRef.current);
+      handleChartPoint(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    clearTimeout(tipTimerRef.current);
+    tipTimerRef.current = setTimeout(() => setTip(null), 2500);
+  };
 
   const cycleColor = () =>
     setColorPref(p => p === 'auto' ? 'light' : p === 'light' ? 'dark' : 'auto');
@@ -439,6 +484,7 @@ export default function GrowthChart() {
       <div style={{ width: '100%', maxWidth: 480, background: t.surface,
         borderRadius: 12, padding: '14px 8px 10px', boxSizing: 'border-box' }}>
         <svg
+          ref={svgRef}
           viewBox={`0 0 ${VW} ${VH}`}
           style={{ width: '100%', height: 'auto', display: 'block', overflow: 'hidden' }}
           role="img"
@@ -513,32 +559,47 @@ export default function GrowthChart() {
                   <circle key={dog}
                     cx={xS(d.week)} cy={yS(d[dog])} r={6}
                     fill={color} stroke={t.surface} strokeWidth={2}
-                    style={{ cursor: 'pointer' }}
-                    onMouseEnter={() => setTip({
-                      x: xS(d.week), y: yS(d[dog]) - 12,
-                      text: `${dog === 'luke' ? 'Luke' : 'Leia'} ${d[dog]} lb · ${fmtAgeShort(d.week)}`
-                    })}
-                    onMouseLeave={() => setTip(null)}
-                    onClick={() => setTip(tip ? null : {
-                      x: xS(d.week), y: yS(d[dog]) - 12,
-                      text: `${dog === 'luke' ? 'Luke' : 'Leia'} ${d[dog]} lb · ${fmtAgeShort(d.week)}`
-                    })}
                   />
                 ) : null
               )}
             </g>
           ))}
 
+          {/* Hover overlay — captures mouse/touch for tooltip */}
+          <rect
+            x={PL} y={PT} width={CW} height={CH}
+            fill="transparent"
+            style={{ cursor: 'crosshair' }}
+            onMouseMove={handleChartMove}
+            onMouseLeave={() => setTip(null)}
+            onTouchStart={handleChartTouch}
+            onTouchMove={handleChartTouch}
+            onTouchEnd={handleTouchEnd}
+          />
+
           {/* Tooltip */}
           {tip && (() => {
-            const w = tip.text.length * 5.8 + 10;
-            const tx = Math.min(tip.x - 2, VW - w - 4);
+            const lines = [
+              { text: `${fmtShort(weekToDate(tip.week))} · ${fmtAgeShort(tip.week)}`, color: '#8a9ab0' },
+            ];
+            if (tip.luke != null)
+              lines.push({ text: `Luke  ${tip.lukeIsActual ? '' : '~'}${tip.luke.toFixed(1)} lb`, color: LUKE });
+            if (tip.leia != null)
+              lines.push({ text: `Leia  ${tip.leiaIsActual ? '' : '~'}${tip.leia.toFixed(1)} lb`, color: LEIA });
+            const TT_W = 108, LINE_H = 13, PAD = 6;
+            const TT_H = PAD * 2 + lines.length * LINE_H;
+            let tx = tip.svgX + 10;
+            if (tx + TT_W > PL + CW) tx = tip.svgX - TT_W - 10;
+            let ty = tip.svgY - TT_H - 10;
+            if (ty < PT) ty = tip.svgY + 14;
             return (
-              <g>
-                <rect x={tx} y={tip.y - 14} width={w} height={18} rx={4}
-                  fill={t.ttBg} opacity={0.92} />
-                <text x={tx + 5} y={tip.y} fill={isDark ? '#f0ece4' : '#ffffff'}
-                  fontSize={11} fontFamily="Georgia,serif">{tip.text}</text>
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={tx} y={ty} width={TT_W} height={TT_H} rx={4}
+                  fill={t.ttBg} opacity={0.93} />
+                {lines.map((l, i) => (
+                  <text key={i} x={tx + PAD} y={ty + PAD + (i + 0.82) * LINE_H}
+                    fill={l.color} fontSize={10} fontFamily="Georgia,serif">{l.text}</text>
+                ))}
               </g>
             );
           })()}
