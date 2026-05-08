@@ -55,9 +55,9 @@ const LEIA   = '#f07090';
 const BAND_C = '#8aa8be';
 
 // ── Chart geometry ───────────────────────────────────────────────────────────
-const X_ABS_MIN = 9, X_ABS_MAX = 52, Y_MIN = 0, Y_MAX = 65;
+const X_ABS_MIN = 9, X_ABS_MAX = 52, Y_MIN = 0, Y_MAX = 72;
 const VW = 400, VH = 300;
-const PL = 38, PR = 16, PT = 12, PB = 36;
+const PL = 38, PR = 34, PT = 12, PB = 36;
 const CW = VW - PL - PR, CH = VH - PT - PB;
 
 // y-scale is static; x-scale depends on zoom view
@@ -117,7 +117,7 @@ const scaleBand = A => ({
 
 // ── Tick arrays ───────────────────────────────────────────────────────────────
 const X_TICKS_ALL = [10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
-const Y_TICKS = [10, 20, 30, 40, 50, 60];
+const Y_TICKS = [10, 20, 30, 40, 50, 60, 70];
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 const STORAGE_KEY   = 'puppy-weights:v2';
@@ -257,11 +257,30 @@ export default function GrowthChart() {
     for (let i = 0; i <= steps; i++) {
       const tw = viewMin + (i / steps) * (viewMax - viewMin);
       const w = fn(tw);
-      if (w <= Y_MIN || w >= Y_MAX) continue;
+      if (w <= Y_MIN || w > Y_MAX) continue;
       segs.push(`${segs.length === 0 ? 'M' : 'L'}${xS(tw).toFixed(1)},${yS(w).toFixed(1)}`);
     }
     return segs.join(' ');
   };
+
+  // Right-edge value labels for trends (asymptote) and band hi/lo per dog
+  const rightLabels = [];
+  for (const { dog, color } of [{ dog: 'luke', color: LUKE }, { dog: 'leia', color: LEIA }]) {
+    const fit = dogFits[dog];
+    if (!fit) continue;
+    const band = scaleBand(fit.A);
+    const hiV = band.high[band.high.length - 1].v;
+    const loV = band.low[band.low.length - 1].v;
+    rightLabels.push({ y: yS(hiV),   text: Math.round(hiV).toString(), color, opacity: 0.5 });
+    rightLabels.push({ y: yS(fit.A), text: `~${Math.round(fit.A)}`,    color, opacity: 0.85 });
+    rightLabels.push({ y: yS(loV),   text: Math.round(loV).toString(), color, opacity: 0.5 });
+  }
+  rightLabels.sort((a, b) => a.y - b.y);
+  const MIN_LABEL_GAP = 9;
+  for (let i = 1; i < rightLabels.length; i++) {
+    if (rightLabels[i].y < rightLabels[i - 1].y + MIN_LABEL_GAP)
+      rightLabels[i].y = rightLabels[i - 1].y + MIN_LABEL_GAP;
+  }
 
   // ── Form validation ──
   const lukeNum  = parseFloat(lukeStr);
@@ -442,17 +461,13 @@ export default function GrowthChart() {
             );
           })}
 
-          {/* Per-dog adult weight labels at right edge */}
-          {[{ dog: 'luke', color: LUKE, dy: 0 }, { dog: 'leia', color: LEIA, dy: 10 }].map(({ dog, color, dy }) => {
-            const fit = dogFits[dog];
-            if (!fit) return null;
-            const yVal = yS(fit.A);
-            if (yVal < PT || yVal > PT + CH) return null;
-            return (
-              <text key={dog} x={PL + CW + 2} y={yVal + 4 + dy} fill={color}
-                fontSize={8} opacity={0.65}>{Math.round(fit.A)}</text>
-            );
-          })}
+          {/* Right-edge labels: band hi, ~asymptote, band lo per dog */}
+          {rightLabels.map((lbl, i) =>
+            lbl.y >= PT - 2 && lbl.y <= PT + CH + 4 ? (
+              <text key={i} x={PL + CW + 3} y={lbl.y + 3} fill={lbl.color}
+                fontSize={7.5} opacity={lbl.opacity}>{lbl.text}</text>
+            ) : null
+          )}
 
           {/* Trend lines (clipped, behind actual) */}
           <g clipPath="url(#chart-clip)">
