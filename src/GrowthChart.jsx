@@ -55,7 +55,7 @@ const LEIA   = '#f07090';
 const BAND_C = '#8aa8be';
 
 // ── Chart geometry ───────────────────────────────────────────────────────────
-const X_ABS_MIN = 9, X_ABS_MAX = 52, Y_MIN = 0, Y_MAX = 72;
+const X_ABS_MIN = 0, X_ABS_MAX = 52, Y_MIN = 0, Y_MAX = 72;
 const VW = 400, VH = 300;
 const PL = 38, PR = 34, PT = 12, PB = 36;
 const CW = VW - PL - PR, CH = VH - PT - PB;
@@ -75,20 +75,20 @@ const bandPath = (lo, hi, xS) => {
 
 // ── Logistic trend fit: W(t) = A / (1 + exp(-k*(t-t0))) ─────────────────────
 // Grid-searches for the best asymptote A per dog via min SSR in original space.
-// A birth anchor at (0, ~0.85 lb) is always included so the S-curve starts
-// near 0 rather than extrapolating backward through the steep data-point slope.
 // aMin enforces a biologically plausible lower bound: at current age, the puppy
 // can't already be >maxFrac of adult weight (35% at 10w, rises to 90% at 30w+).
-const BIRTH_ANCHOR = { t: 0, w: 0.85 };
+// k is capped at K_MAX so early sparse data doesn't produce a curve that
+// plateaus before ~52w. A-selection uses uncapped k (so SSR stays sensitive
+// to A); only the final display curve has k capped and t0 refit.
+const K_MAX = 0.10; // medium breeds reach ~97% adult weight by week 52 with this cap
 const fitLogisticFree = pts => {
-  const allPts = [BIRTH_ANCHOR, ...pts];
   const maxW = Math.max(...pts.map(p => p.w));
   const latestT = Math.max(...pts.map(p => p.t));
   const maxFrac = Math.min(0.90, Math.max(0.28, (latestT - 8) * 0.031 + 0.28));
   const aMin = Math.max(maxW / maxFrac, maxW + 3);
-  let best = null;
+  let bestA = null, bestSSR = Infinity;
   for (let A = aMin; A <= 80; A += 0.5) {
-    const valid = allPts.filter(p => p.w < A * 0.99);
+    const valid = pts.filter(p => p.w < A * 0.99);
     if (valid.length < 2) continue;
     const xs = valid.map(p => p.t);
     const ys = valid.map(p => {
@@ -106,10 +106,31 @@ const fitLogisticFree = pts => {
     if (k <= 0) continue;
     const t0 = mX + mY / k;
     const fn = t => A / (1 + Math.exp(-k * (t - t0)));
-    const ssr = allPts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
-    if (best === null || ssr < best.ssr) best = { fn, A, ssr };
+    const ssr = pts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
+    if (ssr < bestSSR) { bestSSR = ssr; bestA = A; }
   }
-  return best ?? null;
+  if (bestA === null) return null;
+  // Rebuild final fn with k capped — A is fixed from above
+  const A = bestA;
+  const valid = pts.filter(p => p.w < A * 0.99);
+  const xs = valid.map(p => p.t);
+  const ys = valid.map(p => Math.log(A / p.w - 1));
+  const n = xs.length;
+  const mX = xs.reduce((s, v) => s + v, 0) / n;
+  const mY = ys.reduce((s, v) => s + v, 0) / n;
+  const num = xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0);
+  const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
+  let k = Math.abs(den) > 1e-10 ? -(num / den) : K_MAX;
+  if (k <= 0) k = K_MAX;
+  let t0;
+  if (k > K_MAX) {
+    k = K_MAX;
+    t0 = (mY + K_MAX * mX) / K_MAX;
+  } else {
+    t0 = mX + mY / k;
+  }
+  const fn = t => A / (1 + Math.exp(-k * (t - t0)));
+  return { fn, A };
 };
 
 // Scale the shared BAND shape to a per-dog projected adult weight
@@ -120,7 +141,7 @@ const scaleBand = A => ({
 });
 
 // ── Tick arrays ───────────────────────────────────────────────────────────────
-const X_TICKS_ALL = [10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
+const X_TICKS_ALL = [0, 6, 10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
 const Y_TICKS = [10, 20, 30, 40, 50, 60, 70];
 
 // ── Storage ───────────────────────────────────────────────────────────────────
