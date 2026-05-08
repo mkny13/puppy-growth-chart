@@ -594,6 +594,8 @@ export default function GrowthChart() {
             if (ty < PT) ty = tip.svgY + 14;
             return (
               <g style={{ pointerEvents: 'none' }}>
+                <line x1={tip.svgX} y1={PT} x2={tip.svgX} y2={PT + CH}
+                  stroke={t.axisLine} strokeWidth={1} strokeDasharray="3 3" />
                 <rect x={tx} y={ty} width={TT_W} height={TT_H} rx={4}
                   fill={t.ttBg} opacity={0.93} />
                 {lines.map((l, i) => (
