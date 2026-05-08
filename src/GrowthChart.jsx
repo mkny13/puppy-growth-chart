@@ -74,28 +74,46 @@ const bandPath = (lo, hi, xS) => {
 };
 
 // ── Logistic trend fit: W(t) = A / (1 + exp(-k*(t-t0))) ─────────────────────
-// A = adult weight prior (band midpoint). OLS in transformed space.
-const ADULT_A = 47;
-const fitLogistic = (pts, A = ADULT_A) => {
-  const valid = pts.filter(p => p.w > 0 && p.w < A * 0.99);
-  if (valid.length < 2) return null;
-  const xs = valid.map(p => p.t);
-  const ys = valid.map(p => {
-    const r = A / p.w - 1;
-    return r > 0 ? Math.log(r) : null;
-  });
-  if (ys.some(v => v == null)) return null;
-  const n = xs.length;
-  const mX = xs.reduce((s, v) => s + v, 0) / n;
-  const mY = ys.reduce((s, v) => s + v, 0) / n;
-  const num = xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0);
-  const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
-  if (Math.abs(den) < 1e-10) return null;
-  const k = -(num / den);
-  if (k <= 0) return null;
-  const t0 = mX + mY / k;
-  return t => A / (1 + Math.exp(-k * (t - t0)));
+// Grid-searches for the best asymptote A per dog via min SSR in original space.
+// aMin enforces a biologically plausible lower bound: at current age, the puppy
+// can't already be >maxFrac of adult weight (35% at 10w, rises to 90% at 30w+).
+const fitLogisticFree = pts => {
+  const maxW = Math.max(...pts.map(p => p.w));
+  const latestT = Math.max(...pts.map(p => p.t));
+  const maxFrac = Math.min(0.90, Math.max(0.28, (latestT - 8) * 0.031 + 0.28));
+  const aMin = Math.max(maxW / maxFrac, maxW + 3);
+  let best = null;
+  for (let A = aMin; A <= 80; A += 0.5) {
+    const valid = pts.filter(p => p.w < A * 0.99);
+    if (valid.length < 2) continue;
+    const xs = valid.map(p => p.t);
+    const ys = valid.map(p => {
+      const r = A / p.w - 1;
+      return r > 0 ? Math.log(r) : null;
+    });
+    if (ys.some(v => v == null)) continue;
+    const n = xs.length;
+    const mX = xs.reduce((s, v) => s + v, 0) / n;
+    const mY = ys.reduce((s, v) => s + v, 0) / n;
+    const num = xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0);
+    const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
+    if (Math.abs(den) < 1e-10) continue;
+    const k = -(num / den);
+    if (k <= 0) continue;
+    const t0 = mX + mY / k;
+    const fn = t => A / (1 + Math.exp(-k * (t - t0)));
+    const ssr = pts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
+    if (best === null || ssr < best.ssr) best = { fn, A, ssr };
+  }
+  return best ?? null;
 };
+
+// Scale the shared BAND shape to a per-dog projected adult weight
+const BAND_MID = 47;
+const scaleBand = A => ({
+  high: BAND.high.map(p => ({ ...p, v: p.v * (A / BAND_MID) })),
+  low:  BAND.low.map(p => ({ ...p, v: p.v * (A / BAND_MID) })),
+});
 
 // ── Tick arrays ───────────────────────────────────────────────────────────────
 const X_TICKS_ALL = [10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
@@ -224,11 +242,16 @@ export default function GrowthChart() {
     }).filter(Boolean).join(' ');
   };
 
-  const trendLinePath = dog => {
+  const dogFits = { luke: null, leia: null };
+  for (const dog of ['luke', 'leia']) {
     const pts = actual.filter(d => d[dog] != null).map(d => ({ t: d.week, w: d[dog] }));
-    if (pts.length < 2) return '';
-    const fn = fitLogistic(pts);
-    if (!fn) return '';
+    if (pts.length >= 2) dogFits[dog] = fitLogisticFree(pts);
+  }
+
+  const trendLinePath = dog => {
+    const fit = dogFits[dog];
+    if (!fit) return '';
+    const { fn } = fit;
     const steps = 80;
     const segs = [];
     for (let i = 0; i <= steps; i++) {
@@ -358,7 +381,13 @@ export default function GrowthChart() {
           ))}
         </div>
         <div style={{ fontSize: 11, color: t.textVF, textAlign: 'center', marginTop: 6 }}>
-          Projected adult range: 35–60 lb · calibrates at 14w (~Jun 13)
+          {(() => {
+            const lFit = dogFits.luke;
+            const eFit = dogFits.leia;
+            if (lFit && eFit)
+              return `Luke ~${Math.round(lFit.A)} lb · Leia ~${Math.round(eFit.A)} lb projected · calibrates at 14w (~Jun 13)`;
+            return 'Breed range: 35–60 lb · calibrates at 14w (~Jun 13)';
+          })()}
         </div>
       </div>
 
@@ -397,18 +426,33 @@ export default function GrowthChart() {
               stroke={t.calLine} strokeWidth={1} strokeDasharray="3 3" />
           )}
 
-          {/* Projection band (clipped) */}
-          <g clipPath="url(#chart-clip)">
-            <path d={bandPath(BAND.low, BAND.high, xS)} fill={BAND_C} fillOpacity={0.12} />
-            <path d={toD(BAND.high, xS)} fill="none" stroke={BAND_C}
-              strokeWidth={0.8} strokeDasharray="4 3" strokeOpacity={0.3} />
-            <path d={toD(BAND.low, xS)} fill="none" stroke={BAND_C}
-              strokeWidth={0.8} strokeDasharray="4 3" strokeOpacity={0.3} />
-          </g>
+          {/* Per-dog projection bands (clipped) */}
+          {[{ dog: 'luke', color: LUKE }, { dog: 'leia', color: LEIA }].map(({ dog, color }) => {
+            const fit = dogFits[dog];
+            if (!fit) return null;
+            const band = scaleBand(fit.A);
+            return (
+              <g key={dog} clipPath="url(#chart-clip)">
+                <path d={bandPath(band.low, band.high, xS)} fill={color} fillOpacity={0.07} />
+                <path d={toD(band.high, xS)} fill="none" stroke={color}
+                  strokeWidth={0.7} strokeDasharray="4 3" strokeOpacity={0.25} />
+                <path d={toD(band.low, xS)} fill="none" stroke={color}
+                  strokeWidth={0.7} strokeDasharray="4 3" strokeOpacity={0.25} />
+              </g>
+            );
+          })}
 
-          {/* Band edge labels */}
-          <text x={PL + CW + 2} y={yS(60) + 4} fill={BAND_C} fontSize={8} opacity={0.55}>60</text>
-          <text x={PL + CW + 2} y={yS(35) + 4} fill={BAND_C} fontSize={8} opacity={0.55}>35</text>
+          {/* Per-dog adult weight labels at right edge */}
+          {[{ dog: 'luke', color: LUKE, dy: 0 }, { dog: 'leia', color: LEIA, dy: 10 }].map(({ dog, color, dy }) => {
+            const fit = dogFits[dog];
+            if (!fit) return null;
+            const yVal = yS(fit.A);
+            if (yVal < PT || yVal > PT + CH) return null;
+            return (
+              <text key={dog} x={PL + CW + 2} y={yVal + 4 + dy} fill={color}
+                fontSize={8} opacity={0.65}>{Math.round(fit.A)}</text>
+            );
+          })}
 
           {/* Trend lines (clipped, behind actual) */}
           <g clipPath="url(#chart-clip)">
@@ -542,12 +586,19 @@ export default function GrowthChart() {
               fontSize: 13, fontStyle: 'italic' }}>{label}</span>
           </div>
         ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8,
-          background: t.surface, borderRadius: 8, padding: '7px 12px' }}>
-          <div style={{ width: 18, height: 3, background: BAND_C, borderRadius: 2,
-            opacity: 0.5, borderTop: `1px dashed ${BAND_C}` }} />
-          <span style={{ color: t.textMuted, fontSize: 13 }}>Adult range</span>
-        </div>
+        {[{ dog: 'luke', color: LUKE, txtColor: t.lukeTxt, label: 'Luke' },
+          { dog: 'leia', color: LEIA, txtColor: t.leiaTxt, label: 'Leia' }].map(({ dog, color, txtColor, label }) => {
+          const fit = dogFits[dog];
+          return (
+            <div key={dog} style={{ display: 'flex', alignItems: 'center', gap: 8,
+              background: t.surface, borderRadius: 8, padding: '7px 12px' }}>
+              <div style={{ width: 18, height: 3, background: color, borderRadius: 2, opacity: 0.4 }} />
+              <span style={{ color: t.textMuted, fontSize: 13 }}>
+                {fit ? `~${Math.round(fit.A)} lb` : `${label} range`}
+              </span>
+            </div>
+          );
+        })}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8,
           background: t.surface, borderRadius: 8, padding: '7px 12px' }}>
           <svg width="18" height="3" style={{ display: 'block' }}>
