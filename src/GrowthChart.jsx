@@ -480,14 +480,6 @@ export default function GrowthChart() {
             })}
           </g>
 
-          {/* Actual lines (clipped) */}
-          <g clipPath="url(#chart-clip)">
-            <path d={actualLinePath('leia')} fill="none" stroke={LEIA}
-              strokeWidth={2.5} filter="url(#glow)" strokeLinecap="round" />
-            <path d={actualLinePath('luke')} fill="none" stroke={LUKE}
-              strokeWidth={2.5} filter="url(#glow)" strokeLinecap="round" />
-          </g>
-
           {/* Data points */}
           {actual.map((d, i) => (
             <g key={i} clipPath="url(#chart-clip)">
@@ -593,11 +585,14 @@ export default function GrowthChart() {
         display: 'flex', gap: 8, marginTop: 12, justifyContent: 'center',
         flexWrap: 'wrap',
       }}>
-        {[{ color: LUKE, label: 'Luke' }, { color: LEIA, label: 'Leia' }].map(({ color, label }) => (
+        {[{ color: LUKE, label: 'Luke', txtColor: t.lukeTxt },
+          { color: LEIA, label: 'Leia', txtColor: t.leiaTxt }].map(({ color, label, txtColor }) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8,
             background: t.surface, borderRadius: 8, padding: '7px 12px' }}>
-            <div style={{ width: 18, height: 3, background: color, borderRadius: 2 }} />
-            <span style={{ color: isDark ? color : (label === 'Luke' ? t.lukeTxt : t.leiaTxt),
+            <svg width="10" height="10" style={{ display: 'block', flexShrink: 0 }}>
+              <circle cx="5" cy="5" r="4" fill={color} />
+            </svg>
+            <span style={{ color: isDark ? color : txtColor,
               fontSize: 13, fontStyle: 'italic' }}>{label}</span>
           </div>
         ))}
