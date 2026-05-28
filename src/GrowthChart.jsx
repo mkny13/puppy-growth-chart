@@ -81,9 +81,7 @@ const BAND_C = "#8aa8be";
 
 // ── Chart geometry ───────────────────────────────────────────────────────────
 const X_ABS_MIN = 0,
-  X_ABS_MAX = 52,
-  Y_MIN = 0,
-  Y_MAX = 72;
+  X_ABS_MAX = 52;
 const VW = 400,
   VH = 300;
 const PL = 38,
@@ -93,11 +91,11 @@ const PL = 38,
 const CW = VW - PL - PR,
   CH = VH - PT - PB;
 
-// y-scale is static; x-scale depends on zoom view
-const yS = (v) => PT + CH - ((v - Y_MIN) / (Y_MAX - Y_MIN)) * CH;
+// y-scale depends on visible data domain; x-scale depends on zoom view
+const makeYS = (dMin, dMax) => (v) => PT + CH - ((v - dMin) / (dMax - dMin)) * CH;
 const makeXS = (min, max) => (w) => PL + ((w - min) / (max - min)) * CW;
 
-const toD = (pts, xS) =>
+const toD = (pts, xS, yS) =>
   pts
     .map(
       (p, i) =>
@@ -105,7 +103,7 @@ const toD = (pts, xS) =>
     )
     .join(" ");
 
-const bandPath = (lo, hi, xS) => {
+const bandPath = (lo, hi, xS, yS) => {
   const top = hi
     .map(
       (p, i) =>
@@ -192,7 +190,6 @@ const scaleBand = (A) => ({
 
 // ── Tick arrays ───────────────────────────────────────────────────────────────
 const X_TICKS_ALL = [0, 6, 10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
-const Y_TICKS = [10, 20, 30, 40, 50, 60, 70];
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "puppy-weights:v2";
@@ -449,6 +446,44 @@ export default function GrowthChart() {
   const lastLuke = lastWith(actual, "luke");
   const lastLeia = lastWith(actual, "leia");
 
+  const dogFits = { luke: null, leia: null };
+  for (const dog of ["luke", "leia"]) {
+    const pts = actual
+      .filter((d) => d[dog] != null)
+      .map((d) => ({ t: d.week, w: d[dog] }));
+    if (pts.length >= 2) dogFits[dog] = fitLogisticFree(pts);
+  }
+
+  // ── Dynamic Y domain ──
+  const visibleActualY = actual
+    .filter((d) => d.week >= viewMin && d.week <= viewMax)
+    .flatMap((d) => [d.luke, d.leia])
+    .filter((v) => v != null && isFinite(v));
+  const visibleTrendY = [];
+  for (const dog of ["luke", "leia"]) {
+    const fit = dogFits[dog];
+    if (!fit) continue;
+    for (let i = 0; i <= 40; i++) {
+      const tw = viewMin + (i / 40) * (viewMax - viewMin);
+      visibleTrendY.push(fit.fn(tw));
+    }
+  }
+  const allVisibleY = [...visibleActualY, ...visibleTrendY].filter(isFinite);
+  let domainMin, domainMax;
+  if (allVisibleY.length === 0) {
+    domainMin = 0;
+    domainMax = 72;
+  } else {
+    const rawMin = Math.min(...allVisibleY);
+    const rawMax = Math.max(...allVisibleY);
+    const pad = (rawMax - rawMin) * 0.1 || 2;
+    domainMin = Math.max(0, Math.floor((rawMin - pad) / 5) * 5);
+    domainMax = Math.ceil((rawMax + pad) / 5) * 5;
+  }
+  const yS = makeYS(domainMin, domainMax);
+  const yTicks = [];
+  for (let t = domainMin; t <= domainMax; t += 5) yTicks.push(t);
+
   const actualLinePath = (dog) => {
     let started = false;
     return actual
@@ -470,14 +505,6 @@ export default function GrowthChart() {
       .join(" ");
   };
 
-  const dogFits = { luke: null, leia: null };
-  for (const dog of ["luke", "leia"]) {
-    const pts = actual
-      .filter((d) => d[dog] != null)
-      .map((d) => ({ t: d.week, w: d[dog] }));
-    if (pts.length >= 2) dogFits[dog] = fitLogisticFree(pts);
-  }
-
   const trendLinePath = (dog) => {
     const fit = dogFits[dog];
     if (!fit) return "";
@@ -487,7 +514,6 @@ export default function GrowthChart() {
     for (let i = 0; i <= steps; i++) {
       const tw = viewMin + (i / steps) * (viewMax - viewMin);
       const w = fn(tw);
-      if (w <= Y_MIN || w > Y_MAX) continue;
       segs.push(
         `${segs.length === 0 ? "M" : "L"}${xS(tw).toFixed(1)},${yS(w).toFixed(1)}`,
       );
@@ -824,7 +850,7 @@ export default function GrowthChart() {
           </defs>
 
           {/* Grid */}
-          {Y_TICKS.map((y) => (
+          {yTicks.map((y) => (
             <line
               key={y}
               x1={PL}
@@ -871,12 +897,12 @@ export default function GrowthChart() {
             return (
               <g key={dog} clipPath="url(#chart-clip)">
                 <path
-                  d={bandPath(band.low, band.high, xS)}
+                  d={bandPath(band.low, band.high, xS, yS)}
                   fill={color}
                   fillOpacity={0.07}
                 />
                 <path
-                  d={toD(band.high, xS)}
+                  d={toD(band.high, xS, yS)}
                   fill="none"
                   stroke={color}
                   strokeWidth={0.7}
@@ -884,7 +910,7 @@ export default function GrowthChart() {
                   strokeOpacity={0.25}
                 />
                 <path
-                  d={toD(band.low, xS)}
+                  d={toD(band.low, xS, yS)}
                   fill="none"
                   stroke={color}
                   strokeWidth={0.7}
@@ -1051,7 +1077,7 @@ export default function GrowthChart() {
           />
 
           {/* Y labels */}
-          {Y_TICKS.map((y) => (
+          {yTicks.map((y) => (
             <text
               key={y}
               x={PL - 4}
