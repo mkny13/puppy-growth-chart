@@ -126,7 +126,7 @@ const bandPath = (lo, hi, xS) => {
 // k is capped at K_MAX so early sparse data doesn't produce a curve that
 // plateaus before ~52w. A-selection uses uncapped k (so SSR stays sensitive
 // to A); only the final display curve has k capped and t0 refit.
-const K_MAX = 0.1; // medium breeds reach ~97% adult weight by week 52 with this cap
+const K_MAX = 0.18; // lets the curve match steeper observed growth (~0.17/wk in current data) while still preventing an absurdly early plateau
 const fitLogisticFree = (pts) => {
   const maxW = Math.max(...pts.map((p) => p.w));
   const latestT = Math.max(...pts.map((p) => p.t));
