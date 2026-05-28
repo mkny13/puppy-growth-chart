@@ -118,29 +118,58 @@ const bandPath = (lo, hi, xS, yS) => {
 };
 
 // ── Logistic trend fit: W(t) = A / (1 + exp(-k*(t-t0))) ─────────────────────
-// Grid-searches for the best asymptote A per dog via min SSR in original space.
-// aMin enforces a biologically plausible lower bound: at current age, the puppy
-// can't already be >maxFrac of adult weight (35% at 10w, rises to 90% at 30w+).
-// k is capped at K_MAX so early sparse data doesn't produce a curve that
-// plateaus before ~52w. A-selection uses uncapped k (so SSR stays sensitive
-// to A); only the final display curve has k capped and t0 refit.
-const K_MAX = 0.18; // lets the curve match steeper observed growth (~0.17/wk in current data) while still preventing an absurdly early plateau
+// Adult weight A is derived from actual measurements via the logistic growth
+// model. Two regimes based on how much data we have:
+//
+//   < MIN_POINTS_FOR_FREE_FIT: k is fixed at K_PRIOR (medium-breed value
+//   matching the implicit growth rate in the BAND prior). 1/W vs exp(-k·t)
+//   linearizes the model, so A and t0 fall out as a closed-form fit of the
+//   measurements under that k.
+//
+//   ≥ MIN_POINTS_FOR_FREE_FIT: data drives all three params. Grid-search A,
+//   derive (k, t0) per candidate via logit-space linearization, pick A with
+//   min SSR in original weight space. No artificial k cap.
+const K_PRIOR = 0.18;
+const MIN_POINTS_FOR_FREE_FIT = 8;
+
+// Linear regression of y = 1/W on z = exp(-k·t).
+// Model: 1/W = 1/A + (exp(k·t0)/A) · exp(-k·t) → intercept gives A, slope gives t0.
+// Returns null if the regression yields A below the heaviest observed weight,
+// which means the assumed k can't explain the data.
+const fitLogisticFixedK = (pts, k) => {
+  const n = pts.length;
+  if (n < 2) return null;
+  const zs = pts.map((p) => Math.exp(-k * p.t));
+  const ys = pts.map((p) => 1 / p.w);
+  const mZ = zs.reduce((s, v) => s + v, 0) / n;
+  const mY = ys.reduce((s, v) => s + v, 0) / n;
+  const num = zs.reduce((s, z, i) => s + (z - mZ) * (ys[i] - mY), 0);
+  const den = zs.reduce((s, z) => s + (z - mZ) ** 2, 0);
+  if (Math.abs(den) < 1e-10) return null;
+  const b = num / den;
+  const a = mY - b * mZ;
+  if (a <= 0 || b <= 0) return null;
+  const A = 1 / a;
+  if (A <= Math.max(...pts.map((p) => p.w))) return null;
+  const t0 = Math.log(b * A) / k;
+  const fn = (t) => A / (1 + Math.exp(-k * (t - t0)));
+  return { fn, A, k };
+};
+
 const fitLogisticFree = (pts) => {
   const maxW = Math.max(...pts.map((p) => p.w));
   const latestT = Math.max(...pts.map((p) => p.t));
   const maxFrac = Math.min(0.9, Math.max(0.28, (latestT - 8) * 0.031 + 0.28));
   const aMin = Math.max(maxW / maxFrac, maxW + 3);
   let bestA = null,
+    bestK = null,
+    bestT0 = null,
     bestSSR = Infinity;
   for (let A = aMin; A <= 80; A += 0.5) {
     const valid = pts.filter((p) => p.w < A * 0.99);
     if (valid.length < 2) continue;
     const xs = valid.map((p) => p.t);
-    const ys = valid.map((p) => {
-      const r = A / p.w - 1;
-      return r > 0 ? Math.log(r) : null;
-    });
-    if (ys.some((v) => v == null)) continue;
+    const ys = valid.map((p) => Math.log(A / p.w - 1));
     const n = xs.length;
     const mX = xs.reduce((s, v) => s + v, 0) / n;
     const mY = ys.reduce((s, v) => s + v, 0) / n;
@@ -155,30 +184,20 @@ const fitLogisticFree = (pts) => {
     if (ssr < bestSSR) {
       bestSSR = ssr;
       bestA = A;
+      bestK = k;
+      bestT0 = t0;
     }
   }
   if (bestA === null) return null;
-  // Rebuild final fn with k capped — A is fixed from above
-  const A = bestA;
-  const valid = pts.filter((p) => p.w < A * 0.99);
-  const xs = valid.map((p) => p.t);
-  const ys = valid.map((p) => Math.log(A / p.w - 1));
-  const n = xs.length;
-  const mX = xs.reduce((s, v) => s + v, 0) / n;
-  const mY = ys.reduce((s, v) => s + v, 0) / n;
-  const num = xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0);
-  const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
-  let k = Math.abs(den) > 1e-10 ? -(num / den) : K_MAX;
-  if (k <= 0) k = K_MAX;
-  let t0;
-  if (k > K_MAX) {
-    k = K_MAX;
-    t0 = (mY + K_MAX * mX) / K_MAX;
-  } else {
-    t0 = mX + mY / k;
-  }
-  const fn = (t) => A / (1 + Math.exp(-k * (t - t0)));
-  return { fn, A };
+  const fn = (t) => bestA / (1 + Math.exp(-bestK * (t - bestT0)));
+  return { fn, A: bestA, k: bestK };
+};
+
+// If the prior-k fit is degenerate (data demands higher k than prior), fall
+// back to the free fit rather than hiding the trendline entirely.
+const fitDog = (pts) => {
+  if (pts.length >= MIN_POINTS_FOR_FREE_FIT) return fitLogisticFree(pts);
+  return fitLogisticFixedK(pts, K_PRIOR) ?? fitLogisticFree(pts);
 };
 
 // Scale the shared BAND shape to a per-dog projected adult weight
@@ -451,7 +470,7 @@ export default function GrowthChart() {
     const pts = actual
       .filter((d) => d[dog] != null)
       .map((d) => ({ t: d.week, w: d[dog] }));
-    if (pts.length >= 2) dogFits[dog] = fitLogisticFree(pts);
+    if (pts.length >= 2) dogFits[dog] = fitDog(pts);
   }
 
   // ── Dynamic Y domain ──
