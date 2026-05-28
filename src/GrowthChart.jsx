@@ -148,6 +148,31 @@ const Y_TICKS = [10, 20, 30, 40, 50, 60, 70];
 const STORAGE_KEY   = 'puppy-weights:v2';
 const COLOR_PREF_KEY = 'puppy-color-pref';
 
+// ── Remote sync ──────────────────────────────────────────────────────────────
+// Leave WORKER_URL/APP_KEY empty until the Cloudflare Worker is deployed
+// (see worker/README.md). When empty, the app falls back to localStorage-only.
+const WORKER_URL = '';
+const APP_KEY    = '';
+const SYNC_ENABLED = WORKER_URL !== '' && APP_KEY !== '';
+
+const remoteFetch = async () => {
+  const res = await fetch(`${WORKER_URL}/api/data`, {
+    headers: { 'X-App-Key': APP_KEY },
+  });
+  if (!res.ok) throw new Error(`GET ${res.status}`);
+  return res.json();
+};
+
+const remotePut = async (entries) => {
+  const res = await fetch(`${WORKER_URL}/api/data`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-App-Key': APP_KEY },
+    body: JSON.stringify({ entries }),
+  });
+  if (!res.ok) throw new Error(`PUT ${res.status}`);
+  return res.json();
+};
+
 const lastWith = (rows, dog) => {
   for (let i = rows.length - 1; i >= 0; i--)
     if (rows[i][dog] != null) return rows[i];
@@ -230,10 +255,112 @@ export default function GrowthChart() {
   const svgRef = useRef(null);
   const tipTimerRef = useRef(null);
 
+  // ── Sync state ──
+  // null when sync is disabled; otherwise: 'loading…' | 'syncing…' | 'synced' | 'offline'
+  const [syncStatus, setSyncStatus] = useState(SYNC_ENABLED ? 'loading…' : null);
+  const lastSyncedRef    = useRef(null);   // ISO timestamp of last successful sync
+  const readyToSyncRef   = useRef(!SYNC_ENABLED);  // true after initial remote load resolves
+  const skipNextSaveRef  = useRef(false);  // skips the next save effect after a remote-driven setActual
+  const pendingWriteRef  = useRef(false);  // a PUT is in flight or scheduled
+  const dirtyRef         = useRef(false);  // local state has unflushed edits
+  const saveTimerRef     = useRef(null);
+  const actualRef        = useRef(actual); // always-current snapshot for async handlers
+
   // ── Effects ──
+  useEffect(() => { actualRef.current = actual; }, [actual]);
+
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(actual)); } catch {}
+
+    if (!SYNC_ENABLED) return;
+    if (!readyToSyncRef.current) return;          // initial remote load hasn't finished yet
+    if (skipNextSaveRef.current) {                // this change came from remote, don't echo it back
+      skipNextSaveRef.current = false;
+      return;
+    }
+
+    clearTimeout(saveTimerRef.current);
+    pendingWriteRef.current = true;
+    dirtyRef.current = true;
+    setSyncStatus('syncing…');
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await remotePut(actualRef.current);
+        lastSyncedRef.current = res.updated || null;
+        dirtyRef.current = false;
+        setSyncStatus('synced');
+      } catch {
+        setSyncStatus('offline');
+      } finally {
+        pendingWriteRef.current = false;
+      }
+    }, 500);
   }, [actual]);
+
+  // Initial remote load — remote wins on hydration, so devices converge on the shared truth.
+  useEffect(() => {
+    if (!SYNC_ENABLED) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await remoteFetch();
+        if (cancelled) return;
+        if (Array.isArray(remote.entries)) {
+          skipNextSaveRef.current = true;
+          setActual(remote.entries);
+          lastSyncedRef.current = remote.updated || null;
+        }
+        setSyncStatus('synced');
+      } catch {
+        if (!cancelled) setSyncStatus('offline');
+      } finally {
+        if (!cancelled) readyToSyncRef.current = true;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Pull on focus/visibility so the other person's edits show up without a manual reload.
+  // If we have an unflushed local change, push it first.
+  useEffect(() => {
+    if (!SYNC_ENABLED) return;
+    const refresh = async () => {
+      if (pendingWriteRef.current) return;
+      if (dirtyRef.current) {
+        pendingWriteRef.current = true;
+        setSyncStatus('syncing…');
+        try {
+          const res = await remotePut(actualRef.current);
+          lastSyncedRef.current = res.updated || null;
+          dirtyRef.current = false;
+          setSyncStatus('synced');
+        } catch {
+          setSyncStatus('offline');
+        } finally {
+          pendingWriteRef.current = false;
+        }
+        return;
+      }
+      try {
+        const remote = await remoteFetch();
+        if (remote.updated && remote.updated !== lastSyncedRef.current && Array.isArray(remote.entries)) {
+          skipNextSaveRef.current = true;
+          setActual(remote.entries);
+          lastSyncedRef.current = remote.updated;
+        }
+        setSyncStatus('synced');
+      } catch {
+        setSyncStatus('offline');
+      }
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(COLOR_PREF_KEY, colorPref);
@@ -770,7 +897,9 @@ export default function GrowthChart() {
         }}>
           <div style={{ ...sectionLabel, display: 'flex', justifyContent: 'space-between' }}>
             <span>History</span>
-            <span style={{ color: t.textVF }}>{actual.length} entries</span>
+            <span style={{ color: t.textVF }}>
+              {syncStatus ? `${syncStatus} · ${actual.length} entries` : `${actual.length} entries`}
+            </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {actual.map((d, i) => ({ d, i })).slice().reverse().map(({ d, i }) => (

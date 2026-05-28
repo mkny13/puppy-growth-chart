@@ -1,0 +1,13 @@
+name = "puppy-growth-sync"
+main = "src/index.js"
+compatibility_date = "2026-05-01"
+
+[vars]
+GITHUB_REPO = "mkny13/puppy-growth-chart"
+GITHUB_BRANCH = "main"
+DATA_PATH = "data/weights.json"
+ALLOWED_ORIGIN = "https://mkny13.github.io"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+#   GITHUB_TOKEN  — fine-grained PAT, scoped to GITHUB_REPO, Contents: read/write
+#   APP_KEY       — shared header value (also baked into the frontend bundle)
