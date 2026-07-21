@@ -207,6 +207,19 @@ const scaleBand = (A) => ({
   low: BAND.low.map((p) => ({ ...p, v: p.v * (A / BAND_MID) })),
 });
 
+// Linear-interpolate a piecewise band array (sorted by week) at week w.
+const interpBand = (arr, w) => {
+  if (w <= arr[0].w) return arr[0].v;
+  const last = arr[arr.length - 1];
+  if (w >= last.w) return last.v;
+  for (let i = 0; i < arr.length - 1; i++) {
+    const a = arr[i],
+      b = arr[i + 1];
+    if (w <= b.w) return a.v + ((w - a.w) / (b.w - a.w)) * (b.v - a.v);
+  }
+  return last.v;
+};
+
 // ── Tick arrays ───────────────────────────────────────────────────────────────
 const X_TICKS_ALL = [0, 6, 10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
 
@@ -473,7 +486,25 @@ export default function GrowthChart() {
     if (pts.length >= 2) dogFits[dog] = fitDog(pts);
   }
 
-  // ── Dynamic Y domain ──
+  // Per-dog scaled projection band + its final (adult) hi/lo, computed once
+  // and shared by the y-domain calc, the chart band render, the right-edge
+  // labels, and the legend/summary range text.
+  const dogBands = { luke: null, leia: null };
+  const dogRange = { luke: null, leia: null };
+  for (const dog of ["luke", "leia"]) {
+    const fit = dogFits[dog];
+    if (!fit) continue;
+    const band = scaleBand(fit.A);
+    dogBands[dog] = band;
+    dogRange[dog] = {
+      hi: band.high[band.high.length - 1].v,
+      lo: band.low[band.low.length - 1].v,
+    };
+  }
+
+  // ── Dynamic Y domain ── driven by whatever's actually visible in the
+  // current [viewMin, viewMax] window: actual points, the trend line, and
+  // the projection band (so the band's top/bottom is never clipped).
   const visibleActualY = actual
     .filter((d) => d.week >= viewMin && d.week <= viewMax)
     .flatMap((d) => [d.luke, d.leia])
@@ -481,10 +512,13 @@ export default function GrowthChart() {
   const visibleTrendY = [];
   for (const dog of ["luke", "leia"]) {
     const fit = dogFits[dog];
+    const band = dogBands[dog];
     if (!fit) continue;
     for (let i = 0; i <= 40; i++) {
       const tw = viewMin + (i / 40) * (viewMax - viewMin);
       visibleTrendY.push(fit.fn(tw));
+      visibleTrendY.push(interpBand(band.high, tw));
+      visibleTrendY.push(interpBand(band.low, tw));
     }
   }
   const allVisibleY = [...visibleActualY, ...visibleTrendY].filter(isFinite);
@@ -548,9 +582,7 @@ export default function GrowthChart() {
   ]) {
     const fit = dogFits[dog];
     if (!fit) continue;
-    const band = scaleBand(fit.A);
-    const hiV = band.high[band.high.length - 1].v;
-    const loV = band.low[band.low.length - 1].v;
+    const { hi: hiV, lo: loV } = dogRange[dog];
     rightLabels.push({
       y: yS(hiV),
       text: Math.round(hiV).toString(),
@@ -917,8 +949,8 @@ export default function GrowthChart() {
             { dog: "leia", color: LEIA },
           ].map(({ dog, color }) => {
             const fit = dogFits[dog];
-            if (!fit) return null;
-            const band = scaleBand(fit.A);
+            const band = dogBands[dog];
+            if (!fit || !band) return null;
             return (
               <g key={dog} clipPath="url(#chart-clip)">
                 <path
@@ -1299,6 +1331,7 @@ export default function GrowthChart() {
           { dog: "leia", color: LEIA, txtColor: t.leiaTxt, label: "Leia" },
         ].map(({ dog, color, txtColor, label }) => {
           const fit = dogFits[dog];
+          const range = dogRange[dog];
           return (
             <div
               key={dog}
@@ -1321,7 +1354,9 @@ export default function GrowthChart() {
                 }}
               />
               <span style={{ color: t.textMuted, fontSize: 13 }}>
-                {fit ? `~${Math.round(fit.A)} lb` : `${label} range`}
+                {fit && range
+                  ? `~${Math.round(fit.A)} lb (${Math.round(range.lo)}–${Math.round(range.hi)})`
+                  : `${label} range`}
               </span>
             </div>
           );
