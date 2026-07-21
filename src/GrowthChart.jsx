@@ -825,9 +825,15 @@ export default function GrowthChart() {
           {(() => {
             const lFit = dogFits.luke;
             const eFit = dogFits.leia;
-            if (lFit && eFit)
-              return `Luke ~${Math.round(lFit.A)} lb · Leia ~${Math.round(eFit.A)} lb projected · calibrates at 14w (~Jun 13)`;
-            return "Breed range: 35–60 lb · calibrates at 14w (~Jun 13)";
+            const latest = actual.length ? actual[actual.length - 1] : null;
+            const asOf = latest
+              ? `updated through ${fmtShort(weekToDate(latest.week))} (${fmtAgeShort(latest.week)})`
+              : null;
+            const base =
+              lFit && eFit
+                ? `Luke ~${Math.round(lFit.A)} lb · Leia ~${Math.round(eFit.A)} lb projected`
+                : "Breed range: 35–60 lb";
+            return asOf ? `${base} · ${asOf}` : base;
           })()}
         </div>
       </div>
