@@ -44,36 +44,6 @@ const SEED_ACTUAL = [
   { week: 10.57, luke: 18.4, leia: 13.0 },
 ];
 
-// Breed-prior projection band: 35–60 lb adult
-const BAND = {
-  high: [
-    { w: 9.3, v: 16 },
-    { w: 10.1, v: 19 },
-    { w: 12, v: 24 },
-    { w: 14, v: 29 },
-    { w: 18, v: 38 },
-    { w: 22, v: 47 },
-    { w: 26, v: 54 },
-    { w: 32, v: 58 },
-    { w: 38, v: 60 },
-    { w: 44, v: 60 },
-    { w: 52, v: 60 },
-  ],
-  low: [
-    { w: 9.3, v: 10 },
-    { w: 10.1, v: 12 },
-    { w: 12, v: 15 },
-    { w: 14, v: 18 },
-    { w: 18, v: 23 },
-    { w: 22, v: 28 },
-    { w: 26, v: 32 },
-    { w: 32, v: 34 },
-    { w: 38, v: 35 },
-    { w: 44, v: 35 },
-    { w: 52, v: 35 },
-  ],
-};
-
 // ── SVG accent colors (chart lines/dots – non-text, no contrast req) ─────────
 const LUKE = "#6ab0f5";
 const LEIA = "#f07090";
@@ -117,95 +87,150 @@ const bandPath = (lo, hi, xS, yS) => {
   return `${top} ${bot} Z`;
 };
 
-// ── Logistic trend fit: W(t) = A / (1 + exp(-k*(t-t0))) ─────────────────────
-// Adult weight A is derived from actual measurements via the logistic growth
-// model. Two regimes based on how much data we have:
+// ── Growth model: W(t) = A · exp(-exp(-k·(t - t0))) ─────────────────────────
+// Gompertz, the form Hawthorne et al. (J Nutr 2004;134:2027S) fitted to 12
+// breeds with R² > 0.979. It is asymmetric — fast early, long tapering tail —
+// which is how dogs actually grow; a logistic is symmetric and finishes too
+// early.
 //
-//   < MIN_POINTS_FOR_FREE_FIT: k is fixed at K_PRIOR (medium-breed value
-//   matching the implicit growth rate in the BAND prior). 1/W vs exp(-k·t)
-//   linearizes the model, so A and t0 fall out as a closed-form fit of the
-//   measurements under that k.
+// The adult weight A is *not* identifiable from puppy measurements. Profiling
+// the fit over Luke's 14 weigh-ins, every A from 44 to 60 lb reproduces the
+// observed points to within 0.73–1.07 lb RMS, i.e. all of them sit inside the
+// noise of weighing a squirming puppy on a bathroom scale. Letting least
+// squares choose A just tracks that noise: doing so swung the projection
+// between 45 and 91 lb over successive weigh-ins and ultimately landed on an
+// adult weight whose band floor was below the dog's current weight.
 //
-//   ≥ MIN_POINTS_FOR_FREE_FIT: data drives all three params. Grid-search A,
-//   derive (k, t0) per candidate via logit-space linearization, pick A with
-//   min SSR in original weight space. No artificial k cap.
-const K_PRIOR = 0.18;
-const MIN_POINTS_FOR_FREE_FIT = 8;
+// So A is anchored to a breed-size maturity prior, and least squares is left to
+// fit only the shape (k, t0) once A is fixed.
 
-// Linear regression of y = 1/W on z = exp(-k·t).
-// Model: 1/W = 1/A + (exp(k·t0)/A) · exp(-k·t) → intercept gives A, slope gives t0.
-// Returns null if the regression yields A below the heaviest observed weight,
-// which means the assumed k can't explain the data.
-const fitLogisticFixedK = (pts, k) => {
-  const n = pts.length;
-  if (n < 2) return null;
-  const zs = pts.map((p) => Math.exp(-k * p.t));
-  const ys = pts.map((p) => 1 / p.w);
-  const mZ = zs.reduce((s, v) => s + v, 0) / n;
-  const mY = ys.reduce((s, v) => s + v, 0) / n;
-  const num = zs.reduce((s, z, i) => s + (z - mZ) * (ys[i] - mY), 0);
-  const den = zs.reduce((s, z) => s + (z - mZ) ** 2, 0);
-  if (Math.abs(den) < 1e-10) return null;
-  const b = num / den;
-  const a = mY - b * mZ;
-  if (a <= 0 || b <= 0) return null;
-  const A = 1 / a;
-  if (A <= Math.max(...pts.map((p) => p.w))) return null;
-  const t0 = Math.log(b * A) / k;
-  const fn = (t) => A / (1 + Math.exp(-k * (t - t0)));
-  return { fn, A, k };
-};
+// Fraction of adult weight a medium-breed dog carries at age t, in weeks.
+// Gompertz calibrated to two well-established milestones:
+//   16 w (4 mo) → 50%  the "double the four-month weight" rule, which is
+//                      documented as holding best for medium breeds
+//   26 w (6 mo) → 75%  medium breeds are reported at 65–78% of adult weight
+// The implied time-to-half-adult-weight of ~15.8 w agrees with Hawthorne's
+// ~15 w for small/medium breeds (11.1 w Papillon → 22.9 w English Mastiff).
+// Calibrated for post-weaning growth; it overstates maturity below ~8 weeks.
+//
+// "Medium" here means adult size, not ancestry. Salt et al. (PLoS ONE 2017;
+// 12:e0182064, 6M dogs) found growth clusters by adult bodyweight rather than
+// by breed, and concluded size-category curves are the right tool for
+// mixed-breed dogs. This curve is their 15–30 kg category (33–66 lb), which is
+// where both dogs project. If one ever tracked above ~66 lb the next category
+// up matures later and this prior would start under-projecting.
+const MATURITY_K = 0.0879;
+const MATURITY_T0 = 11.83;
+const maturity = (t) => Math.exp(-Math.exp(-MATURITY_K * (t - MATURITY_T0)));
 
-const fitLogisticFree = (pts) => {
-  const maxW = Math.max(...pts.map((p) => p.w));
-  const latestT = Math.max(...pts.map((p) => p.t));
-  const maxFrac = Math.min(0.9, Math.max(0.28, (latestT - 8) * 0.031 + 0.28));
-  const aMin = Math.max(maxW / maxFrac, maxW + 3);
-  let bestA = null,
-    bestK = null,
-    bestT0 = null,
-    bestSSR = Infinity;
-  for (let A = aMin; A <= 80; A += 0.5) {
-    const valid = pts.filter((p) => p.w < A * 0.99);
-    if (valid.length < 2) continue;
-    const xs = valid.map((p) => p.t);
-    const ys = valid.map((p) => Math.log(A / p.w - 1));
-    const n = xs.length;
-    const mX = xs.reduce((s, v) => s + v, 0) / n;
-    const mY = ys.reduce((s, v) => s + v, 0) / n;
-    const num = xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0);
-    const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
-    if (Math.abs(den) < 1e-10) continue;
-    const k = -(num / den);
-    if (k <= 0) continue;
-    const t0 = mX + mY / k;
-    const fn = (t) => A / (1 + Math.exp(-k * (t - t0)));
-    const ssr = pts.reduce((s, p) => s + (p.w - fn(p.t)) ** 2, 0);
-    if (ssr < bestSSR) {
-      bestSSR = ssr;
-      bestA = A;
-      bestK = k;
-      bestT0 = t0;
-    }
+// Individuals run ahead of or behind the reference. Shifting the curve a few
+// weeks either way bounds how much growing can plausibly be left, which turns
+// the latest measurement into hard bounds on the adult weight.
+const EARLY_SHIFT = 3;
+const LATE_SHIFT = 5;
+const maturityFast = (t) => Math.min(0.99, maturity(t + EARLY_SHIFT));
+const maturitySlow = (t) => maturity(t - LATE_SHIFT);
+
+// Each measurement implies an adult weight of w / maturity(t). Later ones are
+// far more informative: dividing a half-pound weighing error by 0.75 amplifies
+// it much less than dividing by 0.30. Weight each estimate by maturity(t)³.
+const REF_WEIGHT_POW = 3;
+const refAdultWeight = (pts) => {
+  let sumW = 0,
+    sumV = 0;
+  for (const p of pts) {
+    const m = maturity(p.t);
+    const wt = m ** REF_WEIGHT_POW;
+    sumW += wt;
+    sumV += wt * (p.w / m);
   }
-  if (bestA === null) return null;
-  const fn = (t) => bestA / (1 + Math.exp(-bestK * (t - bestT0)));
-  return { fn, A: bestA, k: bestK };
+  return sumW > 0 ? sumV / sumW : null;
 };
 
-// If the prior-k fit is degenerate (data demands higher k than prior), fall
-// back to the free fit rather than hiding the trendline entirely.
+// Least-squares (k, t0) for a known A: ln(-ln(W/A)) = -k·t + k·t0 is linear in
+// t, so the shape falls out of one regression. k is clamped to the range spanned
+// by medium-breed growth rates so a couple of noisy weigh-ins can't produce a
+// curve that finishes implausibly early or late.
+const K_MIN = 0.05;
+const K_MAX = 0.15;
+const fitShape = (pts, A) => {
+  const ref = { k: MATURITY_K, t0: MATURITY_T0 };
+  const valid = pts.filter((p) => p.w > 0 && p.w < A * 0.995);
+  if (valid.length < 2) return ref;
+  const xs = valid.map((p) => p.t);
+  const ys = valid.map((p) => Math.log(-Math.log(p.w / A)));
+  const n = xs.length;
+  const mX = xs.reduce((s, v) => s + v, 0) / n;
+  const mY = ys.reduce((s, v) => s + v, 0) / n;
+  const den = xs.reduce((s, v) => s + (v - mX) ** 2, 0);
+  if (den < 1e-10) return ref;
+  const raw = -(xs.reduce((s, v, i) => s + (v - mX) * (ys[i] - mY), 0) / den);
+  if (!isFinite(raw) || raw <= 0) return ref;
+  const k = Math.min(K_MAX, Math.max(K_MIN, raw));
+  return { k, t0: mX + mY / k };
+};
+
+// Half-width of the adult-weight band, as a fraction of A: widest for a young
+// puppy (±28%, matching the 35–60 lb breed prior this chart started from) and
+// shrinking as the dog runs out of growing left to do.
+const bandSpread = (matNow) => Math.min(0.28, 0.3 * (1 - matNow) + 0.04);
+
 const fitDog = (pts) => {
-  if (pts.length >= MIN_POINTS_FOR_FREE_FIT) return fitLogisticFree(pts);
-  return fitLogisticFixedK(pts, K_PRIOR) ?? fitLogisticFree(pts);
+  if (!pts.length) return null;
+  const maxW = Math.max(...pts.map((p) => p.w));
+  const tLast = Math.max(...pts.map((p) => p.t));
+  // A dog already weighing maxW at tLast cannot finish below
+  // maxW / (fastest plausible maturity) — this is what keeps the band floor
+  // physiologically reachable rather than letting it drift under the dog.
+  const aFloor = maxW / maturityFast(tLast);
+  const aCeil = Math.max(aFloor, maxW / maturitySlow(tLast));
+  const A = Math.min(Math.max(refAdultWeight(pts), aFloor), aCeil);
+  const { k, t0 } = fitShape(pts, A);
+  const spread = bandSpread(maxW / A);
+  return {
+    fn: (t) => A * Math.exp(-Math.exp(-k * (t - t0))),
+    A,
+    k,
+    tLast,
+    lo: Math.max(A * (1 - spread), aFloor),
+    hi: Math.min(A * (1 + spread), aCeil),
+  };
 };
 
-// Scale the shared BAND shape to a per-dog projected adult weight
-const BAND_MID = 47;
-const scaleBand = (A) => ({
-  high: BAND.high.map((p) => ({ ...p, v: p.v * (A / BAND_MID) })),
-  low: BAND.low.map((p) => ({ ...p, v: p.v * (A / BAND_MID) })),
-});
+// The band is pinned to the trend at the latest weigh-in and fans out to the
+// projected adult range by the right edge of the chart: what has already been
+// measured isn't uncertain, only what's left to grow. Sampled rather than
+// hand-drawn so it always follows the dog's own fitted curve.
+const BAND_MIN_W = 8; // the maturity reference isn't calibrated below this
+const BAND_STEP = 2;
+const buildBand = (fit) => {
+  const wNow = fit.fn(fit.tLast);
+  const wEnd = fit.fn(X_ABS_MAX);
+  // Fan out in proportion to how much of the remaining growth has happened, so
+  // the edges land exactly on the projected adult range at the chart's right.
+  const ramp = (w) =>
+    w <= fit.tLast || wEnd <= wNow
+      ? 0
+      : Math.min(1, (fit.fn(w) - wNow) / (wEnd - wNow));
+  // Clamped so a nearly grown dog, whose floor can exceed the trend's own
+  // end value, gets a collapsed band rather than an inverted one.
+  const hiGap = Math.max(0, fit.hi - wEnd);
+  const loGap = Math.max(0, wEnd - fit.lo);
+  const weeks = [];
+  for (let w = BAND_MIN_W; w < X_ABS_MAX; w += BAND_STEP) weeks.push(w);
+  if (fit.tLast > BAND_MIN_W && fit.tLast < X_ABS_MAX) weeks.push(fit.tLast);
+  weeks.push(X_ABS_MAX);
+  weeks.sort((a, b) => a - b);
+  const high = [],
+    low = [];
+  for (const w of weeks) {
+    const base = fit.fn(w),
+      r = ramp(w);
+    high.push({ w, v: base + hiGap * r });
+    low.push({ w, v: base - loGap * r });
+  }
+  return { high, low };
+};
 
 // Linear-interpolate a piecewise band array (sorted by week) at week w.
 const interpBand = (arr, w) => {
@@ -219,6 +244,10 @@ const interpBand = (arr, w) => {
   }
   return last.v;
 };
+
+// Age at which the reference dog is half grown (~16 w, i.e. four months) —
+// derived from the prior rather than hardcoded so the two can't drift apart.
+const HALF_GROWN_W = MATURITY_T0 - Math.log(Math.log(2)) / MATURITY_K;
 
 // ── Tick arrays ───────────────────────────────────────────────────────────────
 const X_TICKS_ALL = [0, 6, 10, 14, 18, 22, 26, 30, 36, 42, 48, 52];
@@ -483,23 +512,19 @@ export default function GrowthChart() {
     const pts = actual
       .filter((d) => d[dog] != null)
       .map((d) => ({ t: d.week, w: d[dog] }));
-    if (pts.length >= 2) dogFits[dog] = fitDog(pts);
+    if (pts.length >= 1) dogFits[dog] = fitDog(pts);
   }
 
-  // Per-dog scaled projection band + its final (adult) hi/lo, computed once
-  // and shared by the y-domain calc, the chart band render, the right-edge
-  // labels, and the legend/summary range text.
+  // Per-dog projection band + its final (adult) hi/lo, computed once and shared
+  // by the y-domain calc, the chart band render, the right-edge labels, and the
+  // legend/summary range text.
   const dogBands = { luke: null, leia: null };
   const dogRange = { luke: null, leia: null };
   for (const dog of ["luke", "leia"]) {
     const fit = dogFits[dog];
     if (!fit) continue;
-    const band = scaleBand(fit.A);
-    dogBands[dog] = band;
-    dogRange[dog] = {
-      hi: band.high[band.high.length - 1].v,
-      lo: band.low[band.low.length - 1].v,
-    };
+    dogBands[dog] = buildBand(fit);
+    dogRange[dog] = { hi: fit.hi, lo: fit.lo };
   }
 
   // ── Dynamic Y domain ── driven by whatever's actually visible in the
@@ -864,7 +889,7 @@ export default function GrowthChart() {
             const base =
               lFit && eFit
                 ? `Luke ~${Math.round(lFit.A)} lb · Leia ~${Math.round(eFit.A)} lb projected`
-                : "Breed range: 35–60 lb";
+                : "Add a weight to see a projection";
             return asOf ? `${base} · ${asOf}` : base;
           })()}
         </div>
@@ -930,12 +955,12 @@ export default function GrowthChart() {
             />
           ))}
 
-          {/* 14w calibration line */}
-          {viewMin <= 14 && viewMax >= 14 && (
+          {/* Half-grown reference (~4 months) */}
+          {viewMin <= HALF_GROWN_W && viewMax >= HALF_GROWN_W && (
             <line
-              x1={xS(14)}
+              x1={xS(HALF_GROWN_W)}
               y1={PT}
-              x2={xS(14)}
+              x2={xS(HALF_GROWN_W)}
               y2={PT + CH}
               stroke={t.calLine}
               strokeWidth={1}
@@ -1587,7 +1612,8 @@ export default function GrowthChart() {
           maxWidth: 400,
         }}
       >
-        Border Collie × Pit Bull type · tap points for details
+        Rat Terrier × Border Collie × Catahoula (best guess) · tap points for
+        details
       </div>
     </div>
   );
