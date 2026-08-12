@@ -112,6 +112,13 @@ const bandPath = (lo, hi, xS, yS) => {
 // The implied time-to-half-adult-weight of ~15.8 w agrees with Hawthorne's
 // ~15 w for small/medium breeds (11.1 w Papillon → 22.9 w English Mastiff).
 // Calibrated for post-weaning growth; it overstates maturity below ~8 weeks.
+//
+// "Medium" here means adult size, not ancestry. Salt et al. (PLoS ONE 2017;
+// 12:e0182064, 6M dogs) found growth clusters by adult bodyweight rather than
+// by breed, and concluded size-category curves are the right tool for
+// mixed-breed dogs. This curve is their 15–30 kg category (33–66 lb), which is
+// where both dogs project. If one ever tracked above ~66 lb the next category
+// up matures later and this prior would start under-projecting.
 const MATURITY_K = 0.0879;
 const MATURITY_T0 = 11.83;
 const maturity = (t) => Math.exp(-Math.exp(-MATURITY_K * (t - MATURITY_T0)));
@@ -882,7 +889,7 @@ export default function GrowthChart() {
             const base =
               lFit && eFit
                 ? `Luke ~${Math.round(lFit.A)} lb · Leia ~${Math.round(eFit.A)} lb projected`
-                : "Breed range: 35–60 lb";
+                : "Add a weight to see a projection";
             return asOf ? `${base} · ${asOf}` : base;
           })()}
         </div>
@@ -1605,7 +1612,8 @@ export default function GrowthChart() {
           maxWidth: 400,
         }}
       >
-        Border Collie × Pit Bull type · tap points for details
+        Rat Terrier × Border Collie × Catahoula (best guess) · tap points for
+        details
       </div>
     </div>
   );
