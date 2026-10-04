@@ -1,0 +1,26 @@
+# Repository-side verify, release, environment, and persistence contract for Mahler.
+
+[verify]
+# No network or secrets: lint, unit tests (growth maths, weights.json shape, Worker with
+# mocked fetch/env), and the production Vite build. Identical to .github/workflows/ci.yml.
+fast = "npm ci && npm run lint && npm test"
+full = "npm ci && npm run verify"
+
+[release]
+how = "Merging to main deploys: .github/workflows/deploy.yml runs ci.yml (lint, tests, build) and only then builds and publishes dist/ to GitHub Pages at https://mkny13.github.io/puppy-growth-chart/. The Cloudflare Worker is NOT deployed by CI; a change under worker/ needs the owner to run `wrangler deploy` from worker/ by hand after merge. Agents never deploy the Worker."
+smoke = "After a Pages deploy, load https://mkny13.github.io/puppy-growth-chart/ and confirm both charts and the existing weights render and the sync badge reads 'synced'. Pre-merge, `npm run build && npm run preview` serves the build locally (preview/dev reads the live Worker; do not add weights while testing)."
+rollback = "Pages: revert the offending commit on main (git revert, via a PR); the deploy workflow republishes the previous build, or re-run the last good deploy.yml run from the Actions tab. Worker: `wrangler rollback` from worker/ (or redeploy the previous commit). data/weights.json: restore an earlier version from git history using the Worker/GitHub, never by hand-editing while the app is live."
+
+[environments]
+production = "GitHub Pages site https://mkny13.github.io/puppy-growth-chart/ (base path /puppy-growth-chart/) plus the Cloudflare Worker puppy-growth-sync at https://puppy-growth-sync.mkastellec.workers.dev, which commits to data/weights.json on main through GitHub's Contents API. Worker secrets GITHUB_TOKEN and APP_KEY live only in Cloudflare."
+local = "npm run dev serves Vite on http://localhost:5173 (allowed by the Worker's CORS/origin check, but it talks to the LIVE Worker and therefore live data). wrangler dev serves the Worker on :8787 and needs secrets the agent does not have."
+ci = "GitHub Actions ubuntu-latest, Node 20. No secrets, no Worker or GitHub API access; tests mock fetch and env."
+isolation = "Verification never needs GITHUB_TOKEN, APP_KEY, Cloudflare credentials or network access. The APP_KEY in src/GrowthChart.jsx is a shared frontend value, not a secret boundary."
+
+[data]
+weights = "data/weights.json: { version, updated, entries: [{ week, luke?, leia? }] }, the only persistent app data. Writer: the puppy-growth-sync Worker (worker/src/index.js), which commits 'Update weights.json (N entries)' directly to main on every save, so each weight save also triggers a CI + Pages deploy. Browsers also keep a localStorage copy (key puppy-weights:v2) that remote data overwrites on load. Backup/restore: git history is the backup; restore by committing an earlier version of the file. Agents and tests must only read it and must tolerate new entries."
+secrets = "Worker GITHUB_TOKEN (fine-grained PAT, Contents read/write on this repo only) and APP_KEY, in Cloudflare only. Never committed, printed or rotated by an agent."
+
+[canary]
+before_compile = "test/canary.test.js (run by `npm test`) resolves Vite's config and fails unless its root is the checkout running the tests, so a build can't silently target another worktree or the primary checkout."
+after_compile = "`npm run build` must emit dist/index.html with asset URLs under /puppy-growth-chart/; the canary test also asserts the Pages base path."
