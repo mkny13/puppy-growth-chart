@@ -31,6 +31,10 @@ Merging to `main` deploys. `.github/workflows/ci.yml` (lint, tests, build) must 
 `deploy.yml` then publishes `dist/` to GitHub Pages. The Worker is **not** deployed by CI:
 after changing `worker/`, run `wrangler deploy` from that directory.
 
+## Security
+
+Audit baseline, accepted risks and how to report a problem: [SECURITY.md](SECURITY.md).
+
 ## Working with agents
 
 Work is tracked in GitHub Issues and handled through Mahler. Agent rules, the verify command,
