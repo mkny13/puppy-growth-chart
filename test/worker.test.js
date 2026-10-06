@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import worker from '../worker/src/index.js';
+import { readFileSync } from 'node:fs';
+import worker, { validateBody } from '../worker/src/index.js';
 
 // No network, no real secrets: env is fake and global fetch is mocked.
 const ORIGIN = 'https://mkny13.github.io';
@@ -47,6 +48,29 @@ describe('routing and CORS', () => {
   it('404s unknown paths', async () => {
     const r = await call(req('GET', { path: '/nope' }));
     expect(r.status).toBe(404);
+  });
+});
+
+describe('CORS allow-list', () => {
+  it('403s OPTIONS from a disallowed origin with no CORS headers', async () => {
+    const r = await call(req('OPTIONS', { origin: 'https://evil.example', key: null }));
+    expect(r.status).toBe(403);
+    expect(r.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+  it('echoes allowed origins on OPTIONS', async () => {
+    for (const origin of [ORIGIN, 'http://localhost:5173']) {
+      const r = await call(req('OPTIONS', { origin, key: null }));
+      expect(r.status).toBe(204);
+      expect(r.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+    }
+  });
+  it('sends no ACAO on 404 or 403 to a disallowed origin', async () => {
+    const r404 = await call(req('GET', { path: '/nope', origin: 'https://evil.example' }));
+    expect(r404.status).toBe(404);
+    expect(r404.headers.get('Access-Control-Allow-Origin')).toBeNull();
+    const r403 = await call(req('GET', { origin: 'https://evil.example' }));
+    expect(r403.status).toBe(403);
+    expect(r403.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 });
 
@@ -120,7 +144,7 @@ describe('GET /api/data', () => {
     fetchMock.mockResolvedValueOnce(res(200, { content: b64('{not json'), sha: 's' }));
     const r = await call(req('GET'));
     expect(r.status).toBe(502);
-    expect((await r.json()).message).toContain('not valid JSON');
+    expect(await r.json()).toEqual({ error: 'upstream' });
   });
   it('rejects unsupported methods', async () => {
     const r = await call(req('DELETE'));
@@ -184,6 +208,26 @@ describe('PUT /api/data', () => {
     expect(r.status).toBe(502);
   });
 
+  it('drops unknown entry keys and null dog values from the commit', async () => {
+    fetchMock.mockResolvedValueOnce(res(200, ghFile({}, 'a'))).mockResolvedValueOnce(res(200, {}));
+    const r = await call(
+      req('PUT', { body: { entries: [{ week: 3, luke: 5, leia: null, note: 'x' }, { week: 4, leia: 6, extra: {} }] } }),
+    );
+    expect(r.status).toBe(200);
+    const written = JSON.parse(atob(JSON.parse(fetchMock.mock.calls[1][1].body).content));
+    expect(written.entries).toEqual([{ week: 3, luke: 5 }, { week: 4, leia: 6 }]);
+    expect(JSON.stringify(await r.json())).not.toContain('note');
+  });
+  it('does not leak GitHub error text in the 502', async () => {
+    fetchMock.mockResolvedValueOnce(res(200, ghFile({}, 'a'))).mockResolvedValueOnce(res(500, 'secret-ish detail'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const r = await call(req('PUT', { body: { entries } }));
+    expect(r.status).toBe(502);
+    expect(await r.text()).not.toContain('secret-ish detail');
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   describe('validation (never reaches GitHub)', () => {
     const bad = {
       'invalid json': '{oops',
@@ -197,6 +241,10 @@ describe('PUT /api/data', () => {
       'infinite week': { entries: [{ week: Infinity }] },
       'string luke': { entries: [{ week: 1, luke: '5' }] },
       'string leia': { entries: [{ week: 1, leia: '5' }] },
+      'negative week': { entries: [{ week: -1 }] },
+      'huge week': { entries: [{ week: 9999 }] },
+      'zero luke': { entries: [{ week: 1, luke: 0 }] },
+      'huge leia': { entries: [{ week: 1, leia: 5000 }] },
     };
     for (const [name, body] of Object.entries(bad)) {
       it(`400s on ${name}`, async () => {
@@ -215,5 +263,12 @@ describe('PUT /api/data', () => {
       expect(r.status).toBe(403);
       expect(fetchMock).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('validateBody against data/weights.json', () => {
+  it('accepts every committed entry', () => {
+    const data = JSON.parse(readFileSync(new URL('../data/weights.json', import.meta.url), 'utf8'));
+    expect(validateBody({ entries: data.entries })).toBeNull();
   });
 });

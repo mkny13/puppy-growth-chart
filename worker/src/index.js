@@ -3,7 +3,15 @@
 // Routes:
 //   GET  /api/data  → returns the parsed weights.json
 //   PUT  /api/data  → validates body, commits a new weights.json to the repo
-//   OPTIONS *       → CORS preflight
+//   OPTIONS *       → CORS preflight (403 for disallowed origins)
+//
+// Rules:
+//   - Origin must be ALLOWED_ORIGIN, http://localhost:* or http://127.0.0.1:*.
+//     CORS headers (Access-Control-Allow-*) are sent only to allowed origins,
+//     on every response including OPTIONS, 403 and 404.
+//   - PUT entries are rebuilt as { week, luke?, leia? }; unknown keys are dropped.
+//   - week must be 0..520; luke/leia, when present, must be > 0 and <= 400.
+//   - Upstream (GitHub) failures return a generic 502; detail goes to console.error only.
 //
 // Env (from wrangler.toml [vars]):
 //   GITHUB_REPO       e.g. "mkny13/puppy-growth-chart"
@@ -16,6 +24,12 @@
 //   APP_KEY       shared header value, also baked into the frontend bundle
 
 const MAX_RETRIES = 3;
+
+const isAllowedOrigin = (origin, env) =>
+  origin === env.ALLOWED_ORIGIN ||
+  // Local dev (vite at localhost) is allowed in addition to the production origin.
+  origin.startsWith('http://localhost:') ||
+  origin.startsWith('http://127.0.0.1:');
 
 const corsHeaders = (origin) => ({
   'Access-Control-Allow-Origin': origin,
@@ -33,12 +47,7 @@ const json = (body, status, headers) =>
 
 const checkAuth = (request, env) => {
   const origin = request.headers.get('Origin') || '';
-  // Local dev (vite at localhost) is allowed in addition to the production origin.
-  const allowed =
-    origin === env.ALLOWED_ORIGIN ||
-    origin.startsWith('http://localhost:') ||
-    origin.startsWith('http://127.0.0.1:');
-  if (!allowed) return { ok: false, status: 403, reason: 'origin' };
+  if (!isAllowedOrigin(origin, env)) return { ok: false, status: 403, reason: 'origin' };
   const key = request.headers.get('X-App-Key') || '';
   if (!env.APP_KEY || key !== env.APP_KEY) {
     return { ok: false, status: 403, reason: 'key' };
@@ -56,18 +65,35 @@ const ghHeaders = (env) => ({
 const fileUrl = (env) =>
   `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${env.DATA_PATH}?ref=${env.GITHUB_BRANCH}`;
 
-const validateBody = (body) => {
+const MAX_WEEK = 520;
+const MAX_WEIGHT = 400;
+
+export const validateBody = (body) => {
   if (!body || typeof body !== 'object') return 'body must be an object';
   if (!Array.isArray(body.entries)) return 'entries must be an array';
   if (body.entries.length > 5000) return 'too many entries';
   for (const e of body.entries) {
     if (!e || typeof e !== 'object') return 'entry must be an object';
     if (typeof e.week !== 'number' || !Number.isFinite(e.week)) return 'week must be a number';
-    if (e.luke != null && (typeof e.luke !== 'number' || !Number.isFinite(e.luke))) return 'luke must be a number';
-    if (e.leia != null && (typeof e.leia !== 'number' || !Number.isFinite(e.leia))) return 'leia must be a number';
+    if (e.week < 0 || e.week > MAX_WEEK) return `week must be between 0 and ${MAX_WEEK}`;
+    for (const dog of ['luke', 'leia']) {
+      const w = e[dog];
+      if (w == null) continue;
+      if (typeof w !== 'number' || !Number.isFinite(w)) return `${dog} must be a number`;
+      if (w <= 0 || w > MAX_WEIGHT) return `${dog} must be greater than 0 and at most ${MAX_WEIGHT}`;
+    }
   }
   return null;
 };
+
+// Keep only the known fields; drop luke/leia when null or undefined.
+const sanitizeEntries = (entries) =>
+  entries.map((e) => {
+    const out = { week: e.week };
+    if (e.luke != null) out.luke = e.luke;
+    if (e.leia != null) out.leia = e.leia;
+    return out;
+  });
 
 const decodeContent = (base64) => {
   // atob → binary string → UTF-8
@@ -100,7 +126,7 @@ const putData = async (env, body, sha) => {
   const payload = {
     version: 1,
     updated: new Date().toISOString(),
-    entries: body.entries,
+    entries: sanitizeEntries(body.entries),
   };
   const res = await fetch(fileUrl(env).replace(/\?ref=.+$/, ''), {
     method: 'PUT',
@@ -124,19 +150,22 @@ const putData = async (env, body, sha) => {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const origin = request.headers.get('Origin') || '*';
+    const origin = request.headers.get('Origin') || '';
+    const cors = isAllowedOrigin(origin, env) ? corsHeaders(origin) : {};
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+      return Object.keys(cors).length
+        ? new Response(null, { status: 204, headers: cors })
+        : new Response(null, { status: 403 });
     }
 
     if (url.pathname !== '/api/data') {
-      return json({ error: 'not found' }, 404, corsHeaders(origin));
+      return json({ error: 'not found' }, 404, cors);
     }
 
     const auth = checkAuth(request, env);
     if (!auth.ok) {
-      return json({ error: 'forbidden', reason: auth.reason }, auth.status, corsHeaders(origin));
+      return json({ error: 'forbidden', reason: auth.reason }, auth.status, cors);
     }
 
     try {
@@ -171,7 +200,8 @@ export default {
 
       return json({ error: 'method not allowed' }, 405, corsHeaders(auth.origin));
     } catch (e) {
-      return json({ error: 'upstream', message: String(e?.message || e) }, 502, corsHeaders(auth.origin));
+      console.error('upstream error:', String(e?.message || e));
+      return json({ error: 'upstream' }, 502, corsHeaders(auth.origin));
     }
   },
 };
