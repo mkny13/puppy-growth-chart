@@ -49,6 +49,11 @@ deploys only after they pass on `main`.
 - A Mahler run ends after the change is committed, `npm run verify` passes, and the branch is
   pushed; the conductor opens the PR, watches CI and merges. Interactive sessions finish with
   `mahler ship <project>#N`.
+- Interactive sessions: start from an issue, then `mahler claim puppy-growth-chart#N` before
+  writing code. Work on branch `mahler/<N>-short-slug` in your own worktree. Long sessions
+  run `mahler heartbeat puppy-growth-chart#N`; if you stop without shipping, run
+  `mahler release puppy-growth-chart#N`. Finish with `mahler ship puppy-growth-chart#N`
+  once pushed; put `Fixes #N` in any PR you open. Don't leave a PR open unhanded.
 - End a Mahler run with exactly one status line: `STATUS: DONE <summary>`,
   `STATUS: NEEDS-YOU <question>`, `STATUS: BLOCKED <reason>` or `STATUS: YIELDED <handoff>`.
 - GitHub Issues are the backlog (see `TASKS.md`).
