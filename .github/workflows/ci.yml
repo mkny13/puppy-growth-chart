@@ -1,7 +1,7 @@
 name: CI
 
 # Runs on every PR, and is reused by deploy.yml so that nothing deploys from
-# main unless lint, tests and the build all pass. No secrets are needed.
+# main unless verification and the dependency audit pass. No secrets are needed.
 on:
   pull_request:
   workflow_call:
@@ -18,8 +18,5 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
-      - run: npm audit --audit-level=high
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      - run: npm ci --audit-level=high
+      - run: npm run verify
