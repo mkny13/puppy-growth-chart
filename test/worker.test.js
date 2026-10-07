@@ -9,7 +9,7 @@ const env = {
   GITHUB_BRANCH: 'main',
   DATA_PATH: 'data/weights.json',
   ALLOWED_ORIGIN: ORIGIN,
-  GITHUB_TOKEN: 'test-token',
+  GITHUB_TOKEN: 'dummy-token',
   APP_KEY: 'test-key',
 };
 
@@ -122,7 +122,7 @@ describe('GET /api/data', () => {
     expect(await r.json()).toEqual(data);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('https://api.github.com/repos/owner/repo/contents/data/weights.json?ref=main');
-    expect(init.headers.Authorization).toBe('Bearer test-token');
+    expect(init.headers.Authorization).toBe('Bearer dummy-token');
   });
   it('returns an empty payload when the file does not exist yet', async () => {
     fetchMock.mockResolvedValueOnce(res(404, {}));
