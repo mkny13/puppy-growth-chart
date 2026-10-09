@@ -14,7 +14,7 @@ rollback = "Pages: revert the offending commit on main (git revert, via a PR); t
 [environments]
 production = "GitHub Pages site https://mkny13.github.io/puppy-growth-chart/ (base path /puppy-growth-chart/) plus the Cloudflare Worker puppy-growth-sync at https://puppy-growth-sync.mkastellec.workers.dev, which commits to data/weights.json on main through GitHub's Contents API. Worker secrets GITHUB_TOKEN and APP_KEY live only in Cloudflare."
 local = "npm run dev serves Vite on http://localhost:5173 (allowed by the Worker's CORS/origin check, but it talks to the LIVE Worker and therefore live data). wrangler dev serves the Worker on :8787 and needs secrets the agent does not have."
-ci = "GitHub Actions ubuntu-latest, Node 20. No secrets, no Worker or GitHub API access; tests mock fetch and env."
+ci = "GitHub Actions ubuntu-latest, Node 22. No secrets, no Worker or GitHub API access; tests mock fetch and env."
 isolation = "Verification never needs GITHUB_TOKEN, APP_KEY, Cloudflare credentials or network access. The APP_KEY in src/GrowthChart.jsx is a shared frontend value, not a secret boundary."
 
 [data]
