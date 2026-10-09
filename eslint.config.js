@@ -13,7 +13,7 @@ export default [
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
     plugins: { react, 'react-hooks': reactHooks },
-    settings: { react: { version: '18.3' } },
+    settings: { react: { version: '19.3' } },
     rules: {
       ...react.configs.recommended.rules,
       ...react.configs['jsx-runtime'].rules,
