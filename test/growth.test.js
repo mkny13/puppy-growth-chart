@@ -4,6 +4,7 @@ import {
   maturity, maturityFast, maturitySlow, refAdultWeight, fitShape, fitDog,
   bandSpread, buildBand, interpBand, makeXS, makeYS, toD, bandPath,
   lastWith, fitDogs, computeYDomain,
+  actualLinePath, trendLinePath, layoutRightLabels, snapTooltip, MIN_LABEL_GAP,
   MATURITY_K, MATURITY_T0, HALF_GROWN_W, X_ABS_MAX, PL, CW, PT, CH, SEED_ACTUAL,
 } from '../src/growth.js';
 
@@ -224,5 +225,66 @@ describe('seed data', () => {
     const weeks = SEED_ACTUAL.map((e) => e.week);
     expect(weeks).toEqual([...weeks].sort((a, b) => a - b));
     SEED_ACTUAL.forEach((e) => { expect(e.luke).toBeGreaterThan(0); expect(e.leia).toBeGreaterThan(0); });
+  });
+});
+
+describe('chart path / label / tooltip helpers', () => {
+  const xS = (w) => w * 10;
+  const yS = (v) => 100 - v;
+
+  describe('actualLinePath', () => {
+    it('starts a new M segment after a row missing the dog', () => {
+      const rows = [{ week: 1, luke: 5 }, { week: 2 }, { week: 3, luke: 7 }, { week: 4, luke: 8 }];
+      expect(actualLinePath(rows, 'luke', 0, 10, xS, yS)).toBe('M10.0,95.0 M30.0,93.0 L40.0,92.0');
+    });
+    it('starts a new M segment after a row outside the view', () => {
+      const rows = [{ week: 1, luke: 5 }, { week: 2, luke: 6 }, { week: 20, luke: 9 }, { week: 3, luke: 7 }];
+      expect(actualLinePath(rows, 'luke', 0, 10, xS, yS)).toBe('M10.0,95.0 L20.0,94.0 M30.0,93.0');
+    });
+  });
+
+  describe('trendLinePath', () => {
+    it('returns "" for a null fit', () => {
+      expect(trendLinePath(null, 0, 10, xS, yS)).toBe('');
+    });
+    it('returns 81 points by default', () => {
+      const path = trendLinePath({ fn: (w) => w }, 0, 10, xS, yS);
+      expect(path.split(' ')).toHaveLength(81);
+      expect(path.startsWith('M')).toBe(true);
+    });
+  });
+
+  describe('layoutRightLabels', () => {
+    const fits = {
+      luke: { hi: 40, lo: 30, A: 35 },
+      leia: { hi: 39, lo: 31, A: 35.5 },
+    };
+    it('sorts ascending with no two labels closer than MIN_LABEL_GAP', () => {
+      const labels = layoutRightLabels(fits, yS, { luke: 'L1', leia: 'L2' });
+      expect(labels).toHaveLength(6);
+      for (let i = 1; i < labels.length; i++) {
+        expect(labels[i].y - labels[i - 1].y).toBeGreaterThanOrEqual(MIN_LABEL_GAP);
+      }
+      expect(labels.map((l) => l.text)).toContain('~35');
+    });
+    it('skips dogs without a fit', () => {
+      expect(layoutRightLabels({ luke: null, leia: null }, yS, {})).toEqual([]);
+    });
+  });
+
+  describe('snapTooltip', () => {
+    const fits = { luke: { fn: (w) => 2 * w }, leia: null };
+    const rows = [{ week: 5, luke: 11, leia: 12 }];
+    it('snaps to a row within 16px', () => {
+      const tip = snapTooltip(rows, fits, 5.1, 55, 0, 10, xS);
+      expect(tip).toEqual({ week: 5, luke: 11, lukeIsActual: true, leia: 12, leiaIsActual: true });
+    });
+    it('falls back to fit.fn when no row is close', () => {
+      const tip = snapTooltip(rows, fits, 8, 80, 0, 10, xS);
+      expect(tip).toEqual({ week: 8, luke: 16, lukeIsActual: false, leia: null, leiaIsActual: false });
+    });
+    it('returns null with no fit and no row', () => {
+      expect(snapTooltip(rows, { luke: null, leia: null }, 8, 80, 0, 10, xS)).toBeNull();
+    });
   });
 });

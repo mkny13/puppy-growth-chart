@@ -293,3 +293,105 @@ export const computeYDomain = (actual, dogFits, dogBands, viewMin, viewMax) => {
     domainMax: Math.ceil((rawMax + pad) / 5) * 5,
   };
 };
+
+// SVG path of measured weights for one dog; the line breaks on rows outside
+// [viewMin, viewMax] and on rows missing that dog.
+export const actualLinePath = (actual, dog, viewMin, viewMax, xS, yS) => {
+  let started = false;
+  return actual
+    .map((d) => {
+      if (d.week < viewMin || d.week > viewMax) {
+        started = false;
+        return "";
+      }
+      const v = d[dog];
+      if (v == null) {
+        started = false;
+        return "";
+      }
+      const seg = `${started ? "L" : "M"}${xS(d.week).toFixed(1)},${yS(v).toFixed(1)}`;
+      started = true;
+      return seg;
+    })
+    .filter(Boolean)
+    .join(" ");
+};
+
+// SVG path of a fitted trend across the view; "" when there is no fit.
+export const trendLinePath = (fit, viewMin, viewMax, xS, yS, steps = 80) => {
+  if (!fit) return "";
+  const { fn } = fit;
+  const segs = [];
+  for (let i = 0; i <= steps; i++) {
+    const tw = viewMin + (i / steps) * (viewMax - viewMin);
+    const w = fn(tw);
+    segs.push(
+      `${segs.length === 0 ? "M" : "L"}${xS(tw).toFixed(1)},${yS(w).toFixed(1)}`,
+    );
+  }
+  return segs.join(" ");
+};
+
+// Right-edge value labels (band hi, asymptote ~A, band lo per dog), sorted by y
+// and pushed apart so none are closer than MIN_LABEL_GAP. colors = { luke, leia }.
+export const MIN_LABEL_GAP = 9;
+export const layoutRightLabels = (dogFits, yS, colors) => {
+  const labels = [];
+  for (const dog of ["luke", "leia"]) {
+    const fit = dogFits[dog];
+    if (!fit) continue;
+    const color = colors[dog];
+    labels.push({
+      y: yS(fit.hi),
+      text: Math.round(fit.hi).toString(),
+      color,
+      opacity: 0.5,
+    });
+    labels.push({
+      y: yS(fit.A),
+      text: `~${Math.round(fit.A)}`,
+      color,
+      opacity: 0.85,
+    });
+    labels.push({
+      y: yS(fit.lo),
+      text: Math.round(fit.lo).toString(),
+      color,
+      opacity: 0.5,
+    });
+  }
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y < labels[i - 1].y + MIN_LABEL_GAP)
+      labels[i].y = labels[i - 1].y + MIN_LABEL_GAP;
+  }
+  return labels;
+};
+
+// Snap the hover position to the nearest visible data row within snapPx; falls
+// back to the trend fit. Returns null when neither dog has a value.
+export const snapTooltip = (
+  actual, dogFits, hoverWeek, svgX, viewMin, viewMax, xS, snapPx = 16,
+) => {
+  let snapEntry = null,
+    bestDist = snapPx;
+  for (const d of actual) {
+    if (d.week < viewMin || d.week > viewMax) continue;
+    const dx = Math.abs(xS(d.week) - svgX);
+    if (dx < bestDist) {
+      bestDist = dx;
+      snapEntry = d;
+    }
+  }
+  const displayWeek = snapEntry?.week ?? hoverWeek;
+  const lukeVal = snapEntry?.luke ?? dogFits.luke?.fn(displayWeek) ?? null;
+  const leiaVal = snapEntry?.leia ?? dogFits.leia?.fn(displayWeek) ?? null;
+  if (lukeVal == null && leiaVal == null) return null;
+  return {
+    week: displayWeek,
+    luke: lukeVal,
+    lukeIsActual: snapEntry != null && snapEntry.luke != null,
+    leia: leiaVal,
+    leiaIsActual: snapEntry != null && snapEntry.leia != null,
+  };
+};

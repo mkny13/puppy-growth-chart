@@ -5,6 +5,7 @@ import {
   SEED_ACTUAL, X_TICKS_ALL, dateToWeek, weekToDate, fmtDateLocal, fmtShort,
   fmtAge, fmtAgeShort, makeXS, makeYS, toD, bandPath, buildBand,
   lastWith, HALF_GROWN_W, fitDogs, computeYDomain,
+  trendLinePath, layoutRightLabels, snapTooltip,
 } from "./growth.js";
 
 // ── SVG accent colors (chart lines/dots – non-text, no contrast req) ─────────
@@ -263,77 +264,7 @@ export default function GrowthChart() {
   const yTicks = [];
   for (let t = domainMin; t <= domainMax; t += 5) yTicks.push(t);
 
-  const actualLinePath = (dog) => {
-    let started = false;
-    return actual
-      .map((d) => {
-        if (d.week < viewMin || d.week > viewMax) {
-          started = false;
-          return "";
-        }
-        const v = d[dog];
-        if (v == null) {
-          started = false;
-          return "";
-        }
-        const seg = `${started ? "L" : "M"}${xS(d.week).toFixed(1)},${yS(v).toFixed(1)}`;
-        started = true;
-        return seg;
-      })
-      .filter(Boolean)
-      .join(" ");
-  };
-
-  const trendLinePath = (dog) => {
-    const fit = dogFits[dog];
-    if (!fit) return "";
-    const { fn } = fit;
-    const steps = 80;
-    const segs = [];
-    for (let i = 0; i <= steps; i++) {
-      const tw = viewMin + (i / steps) * (viewMax - viewMin);
-      const w = fn(tw);
-      segs.push(
-        `${segs.length === 0 ? "M" : "L"}${xS(tw).toFixed(1)},${yS(w).toFixed(1)}`,
-      );
-    }
-    return segs.join(" ");
-  };
-
-  // Right-edge value labels for trends (asymptote) and band hi/lo per dog
-  const rightLabels = [];
-  for (const { dog, color } of [
-    { dog: "luke", color: LUKE },
-    { dog: "leia", color: LEIA },
-  ]) {
-    const fit = dogFits[dog];
-    if (!fit) continue;
-    const { hi: hiV, lo: loV } = dogRange[dog];
-    rightLabels.push({
-      y: yS(hiV),
-      text: Math.round(hiV).toString(),
-      color,
-      opacity: 0.5,
-    });
-    rightLabels.push({
-      y: yS(fit.A),
-      text: `~${Math.round(fit.A)}`,
-      color,
-      opacity: 0.85,
-    });
-    rightLabels.push({
-      y: yS(loV),
-      text: Math.round(loV).toString(),
-      color,
-      opacity: 0.5,
-    });
-  }
-  rightLabels.sort((a, b) => a.y - b.y);
-  const MIN_LABEL_GAP = 9;
-  for (let i = 1; i < rightLabels.length; i++) {
-    if (rightLabels[i].y < rightLabels[i - 1].y + MIN_LABEL_GAP)
-      rightLabels[i].y = rightLabels[i - 1].y + MIN_LABEL_GAP;
-  }
+  const rightLabels = layoutRightLabels(dogFits, yS, { luke: LUKE, leia: LEIA });
 
   // ── Form validation ──
   const lukeNum = parseFloat(lukeStr);
@@ -374,34 +305,12 @@ export default function GrowthChart() {
       return;
     }
     const hoverWeek = viewMin + ((svgX - PL) / CW) * (viewMax - viewMin);
-    // Snap to nearest data row by horizontal distance
-    const SNAP_PX = 16;
-    let snapEntry = null,
-      bestDist = SNAP_PX;
-    for (const d of actual) {
-      if (d.week < viewMin || d.week > viewMax) continue;
-      const dx = Math.abs(xS(d.week) - svgX);
-      if (dx < bestDist) {
-        bestDist = dx;
-        snapEntry = d;
-      }
-    }
-    const displayWeek = snapEntry?.week ?? hoverWeek;
-    const lukeVal = snapEntry?.luke ?? dogFits.luke?.fn(displayWeek) ?? null;
-    const leiaVal = snapEntry?.leia ?? dogFits.leia?.fn(displayWeek) ?? null;
-    if (lukeVal == null && leiaVal == null) {
+    const snap = snapTooltip(actual, dogFits, hoverWeek, svgX, viewMin, viewMax, xS);
+    if (!snap) {
       setTip(null);
       return;
     }
-    setTip({
-      svgX: xS(displayWeek),
-      svgY,
-      week: displayWeek,
-      luke: lukeVal,
-      lukeIsActual: snapEntry != null && snapEntry.luke != null,
-      leia: leiaVal,
-      leiaIsActual: snapEntry != null && snapEntry.leia != null,
-    });
+    setTip({ svgX: xS(snap.week), svgY, ...snap });
   };
 
   const handleChartMove = (e) => handleChartPoint(e.clientX, e.clientY);
@@ -726,7 +635,7 @@ export default function GrowthChart() {
               { dog: "leia", color: LEIA },
               { dog: "luke", color: LUKE },
             ].map(({ dog, color }) => {
-              const d = trendLinePath(dog);
+              const d = trendLinePath(dogFits[dog], viewMin, viewMax, xS, yS);
               return d ? (
                 <path
                   key={dog}
