@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { makeRemote, pushEntries } from "./sync.js";
 import {
   X_ABS_MIN, X_ABS_MAX, VW, VH, PL, PT, CW, CH,
   SEED_ACTUAL, X_TICKS_ALL, dateToWeek, weekToDate, fmtDateLocal, fmtShort,
@@ -22,23 +23,7 @@ const WORKER_URL = "https://puppy-growth-sync.mkastellec.workers.dev";
 const APP_KEY = "309c7eea0951e17d08bffb0562105934d4d1966f1841da9b";
 const SYNC_ENABLED = WORKER_URL !== "" && APP_KEY !== "";
 
-const remoteFetch = async () => {
-  const res = await fetch(`${WORKER_URL}/api/data`, {
-    headers: { "X-App-Key": APP_KEY },
-  });
-  if (!res.ok) throw new Error(`GET ${res.status}`);
-  return res.json();
-};
-
-const remotePut = async (entries) => {
-  const res = await fetch(`${WORKER_URL}/api/data`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-App-Key": APP_KEY },
-    body: JSON.stringify({ entries }),
-  });
-  if (!res.ok) throw new Error(`PUT ${res.status}`);
-  return res.json();
-};
+const { fetchData: remoteFetch, putData: remotePut } = makeRemote(WORKER_URL, APP_KEY);
 
 // ── Themes ────────────────────────────────────────────────────────────────────
 // All text colors verified ≥ 4.5:1 on their respective surface for AA.
@@ -128,6 +113,16 @@ export default function GrowthChart() {
   const dirtyRef = useRef(false); // local state has unflushed edits
   const saveTimerRef = useRef(null);
   const actualRef = useRef(actual); // always-current snapshot for async handlers
+  const syncState = { lastSyncedRef, dirtyRef, pendingWriteRef, setSyncStatus };
+
+  // Don't leave the save debounce or tooltip timers running after unmount.
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimerRef.current);
+      clearTimeout(tipTimerRef.current);
+    },
+    [],
+  );
 
   // ── Effects ──
   useEffect(() => {
@@ -151,17 +146,8 @@ export default function GrowthChart() {
     pendingWriteRef.current = true;
     dirtyRef.current = true;
     setSyncStatus("syncing…");
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        const res = await remotePut(actualRef.current);
-        lastSyncedRef.current = res.updated || null;
-        dirtyRef.current = false;
-        setSyncStatus("synced");
-      } catch {
-        setSyncStatus("offline");
-      } finally {
-        pendingWriteRef.current = false;
-      }
+    saveTimerRef.current = setTimeout(() => {
+      pushEntries(remotePut, actualRef.current, syncState);
     }, 500);
   }, [actual]);
 
@@ -197,18 +183,8 @@ export default function GrowthChart() {
     const refresh = async () => {
       if (pendingWriteRef.current) return;
       if (dirtyRef.current) {
-        pendingWriteRef.current = true;
         setSyncStatus("syncing…");
-        try {
-          const res = await remotePut(actualRef.current);
-          lastSyncedRef.current = res.updated || null;
-          dirtyRef.current = false;
-          setSyncStatus("synced");
-        } catch {
-          setSyncStatus("offline");
-        } finally {
-          pendingWriteRef.current = false;
-        }
+        await pushEntries(remotePut, actualRef.current, syncState);
         return;
       }
       try {
