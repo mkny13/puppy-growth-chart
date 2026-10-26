@@ -4,5 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.js'],
+    restoreMocks: true,
+    unstubGlobals: true,
   },
 });

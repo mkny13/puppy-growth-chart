@@ -1,0 +1,24 @@
+name: Upstream Contract Check
+
+# Scheduled weekly check that GitHub Contents API response shape for data/weights.json
+# still matches the fixture expected by the puppy-growth-sync Worker.
+# Offline verification stays in ci.yml / verify; this contract check runs purely on schedule
+# and manual dispatch without credentials or Worker access.
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: node scripts/check-upstream-contract.mjs
