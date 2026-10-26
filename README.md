@@ -7,7 +7,7 @@ projected adult-weight range. Live at <https://mkny13.github.io/puppy-growth-cha
 
 - **Frontend** — Vite + React single-page app (`src/`), published to GitHub Pages.
   Growth maths and chart shaping are pure functions in `src/growth.js`; the UI is
-  `src/GrowthChart.jsx`.
+  `src/GrowthChart.jsx`, and `src/sync.js` handles Worker requests.
 - **Worker** — `worker/` is a small Cloudflare Worker (`puppy-growth-sync`) that proxies
   reads and writes of `data/weights.json` through GitHub's Contents API, so the GitHub token
   never reaches the browser. See [worker/README.md](worker/README.md).

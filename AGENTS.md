@@ -11,11 +11,13 @@ Pages, plus a tiny Cloudflare Worker (`worker/`, "puppy-growth-sync") that reads
 
 - `src/growth.js` — pure logic: date/age helpers, Gompertz growth model, projection band,
   scales/paths, y-domain. Unit tested. Put new logic here, not in the component.
-- `src/GrowthChart.jsx` — the UI (React + SVG), sync wiring, themes.
+- `src/GrowthChart.jsx` — the UI (React + SVG), sync wired up there using `src/sync.js`, themes.
+- `src/sync.js` — Worker fetch/put client and the shared push routine; unit tested.
+- `src/main.jsx` — entry point.
 - `worker/src/index.js` — the Worker. Config in `worker/wrangler.toml`.
 - `data/weights.json` — the only persistent app data (see below).
 - `test/` — Vitest: `growth`, `weights` (read-only data checks), `worker` (mocked fetch/env),
-  `canary`.
+  `canary`, `sync`, `toolchain`, `docs`.
 
 ## Verify
 
