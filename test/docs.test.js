@@ -23,13 +23,18 @@ describe('AGENTS.md layout documentation', () => {
   });
 
   it('mentions every test file by base name', () => {
+    const layoutSection = agentsMd.split(/^## /m).find((section) => section.startsWith('Layout')) ?? '';
+    const testEntryMatch = layoutSection.match(/(?:^|\n)[*-] `test\/`[\s\S]*?(?=\n(?:[*-] |#|\s*$))/);
+    const testEntry = testEntryMatch ? testEntryMatch[0].trim() : '';
+    expect(testEntry, 'AGENTS.md is missing a test/ entry under ## Layout').toBeTruthy();
+
     const testFiles = readdirSync(testDir, { withFileTypes: true })
       .filter((d) => d.isFile() && d.name.endsWith('.test.js'))
       .map((d) => d.name);
 
     for (const file of testFiles) {
       const baseName = basename(file, '.test.js');
-      expect(agentsMd, `AGENTS.md is missing test ${baseName} (${file})`).toContain(baseName);
+      expect(testEntry, `AGENTS.md test/ layout entry is missing test ${baseName} (${file})`).toContain(baseName);
     }
   });
 });
