@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import worker, { validateBody } from '../worker/src/index.js';
 
@@ -13,8 +13,16 @@ const env = {
   APP_KEY: 'test-key',
 };
 
+const ghFixture = JSON.parse(
+  readFileSync(new URL('./fixtures/github-contents-get.json', import.meta.url), 'utf8')
+);
+
 const b64 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
-const ghFile = (obj, sha = 'sha1') => ({ content: b64(JSON.stringify(obj)), sha });
+const ghFile = (obj, sha = 'sha1') => ({
+  ...ghFixture,
+  content: typeof obj === 'string' ? b64(obj) : b64(JSON.stringify(obj)),
+  sha,
+});
 const res = (status, body) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body ?? {}), { status });
 
@@ -34,7 +42,6 @@ beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => vi.unstubAllGlobals());
 
 const call = (r, e = env) => worker.fetch(r, e);
 
@@ -141,7 +148,7 @@ describe('GET /api/data', () => {
     expect((await r.json()).error).toBe('upstream');
   });
   it('maps corrupt JSON in the repo to 502', async () => {
-    fetchMock.mockResolvedValueOnce(res(200, { content: b64('{not json'), sha: 's' }));
+    fetchMock.mockResolvedValueOnce(res(200, ghFile('{not json', 's')));
     const r = await call(req('GET'));
     expect(r.status).toBe(502);
     expect(await r.json()).toEqual({ error: 'upstream' });
@@ -225,7 +232,6 @@ describe('PUT /api/data', () => {
     expect(r.status).toBe(502);
     expect(await r.text()).not.toContain('secret-ish detail');
     expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
   });
 
   describe('validation (never reaches GitHub)', () => {

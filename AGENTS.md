@@ -17,7 +17,7 @@ Pages, plus a tiny Cloudflare Worker (`worker/`, "puppy-growth-sync") that reads
 - `worker/src/index.js` — the Worker. Config in `worker/wrangler.toml`.
 - `data/weights.json` — the only persistent app data (see below).
 - `test/` — Vitest: `growth`, `weights` (read-only data checks), `worker` (mocked fetch/env),
-  `canary`, `sync`, `toolchain`, `docs`.
+  `canary`, `sync`, `toolchain`, `docs`, `upstream-contract`.
 
 ## Verify
 
