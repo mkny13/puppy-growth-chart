@@ -10,7 +10,7 @@ this repo. Holds a GitHub PAT server-side so the static site never sees it.
   commits to `main`. Retries up to 3× on 409/422 SHA conflicts.
 
 Both routes require:
-- `Origin: https://mkny13.github.io` (or `http://localhost:*` for dev)
+- `Origin: https://mkny13.github.io` (or `http://localhost:*` / `http://127.0.0.1:*` for dev)
 - `X-App-Key: <APP_KEY>` header
 
 ## One-time deploy
