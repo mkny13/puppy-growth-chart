@@ -294,29 +294,6 @@ export const computeYDomain = (actual, dogFits, dogBands, viewMin, viewMax) => {
   };
 };
 
-// SVG path of measured weights for one dog; the line breaks on rows outside
-// [viewMin, viewMax] and on rows missing that dog.
-export const actualLinePath = (actual, dog, viewMin, viewMax, xS, yS) => {
-  let started = false;
-  return actual
-    .map((d) => {
-      if (d.week < viewMin || d.week > viewMax) {
-        started = false;
-        return "";
-      }
-      const v = d[dog];
-      if (v == null) {
-        started = false;
-        return "";
-      }
-      const seg = `${started ? "L" : "M"}${xS(d.week).toFixed(1)},${yS(v).toFixed(1)}`;
-      started = true;
-      return seg;
-    })
-    .filter(Boolean)
-    .join(" ");
-};
-
 // SVG path of a fitted trend across the view; "" when there is no fit.
 export const trendLinePath = (fit, viewMin, viewMax, xS, yS, steps = 80) => {
   if (!fit) return "";

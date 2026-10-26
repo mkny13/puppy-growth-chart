@@ -18,8 +18,8 @@ const STORAGE_KEY = "puppy-weights:v2";
 const COLOR_PREF_KEY = "puppy-color-pref";
 
 // ── Remote sync ──────────────────────────────────────────────────────────────
-// Leave WORKER_URL/APP_KEY empty until the Cloudflare Worker is deployed
-// (see worker/README.md). When empty, the app falls back to localStorage-only.
+// Live Worker (see worker/README.md). Setting either value to an empty
+// string disables sync and falls back to localStorage only.
 const WORKER_URL = "https://puppy-growth-sync.mkastellec.workers.dev";
 const APP_KEY = "309c7eea0951e17d08bffb0562105934d4d1966f1841da9b";
 const SYNC_ENABLED = WORKER_URL !== "" && APP_KEY !== "";

@@ -4,7 +4,7 @@ import {
   maturity, maturityFast, maturitySlow, refAdultWeight, fitShape, fitDog,
   bandSpread, buildBand, interpBand, makeXS, makeYS, toD, bandPath,
   lastWith, fitDogs, computeYDomain,
-  actualLinePath, trendLinePath, layoutRightLabels, snapTooltip, MIN_LABEL_GAP,
+  trendLinePath, layoutRightLabels, snapTooltip, MIN_LABEL_GAP,
   MATURITY_K, MATURITY_T0, HALF_GROWN_W, X_ABS_MAX, PL, CW, PT, CH, SEED_ACTUAL,
 } from '../src/growth.js';
 
@@ -231,17 +231,6 @@ describe('seed data', () => {
 describe('chart path / label / tooltip helpers', () => {
   const xS = (w) => w * 10;
   const yS = (v) => 100 - v;
-
-  describe('actualLinePath', () => {
-    it('starts a new M segment after a row missing the dog', () => {
-      const rows = [{ week: 1, luke: 5 }, { week: 2 }, { week: 3, luke: 7 }, { week: 4, luke: 8 }];
-      expect(actualLinePath(rows, 'luke', 0, 10, xS, yS)).toBe('M10.0,95.0 M30.0,93.0 L40.0,92.0');
-    });
-    it('starts a new M segment after a row outside the view', () => {
-      const rows = [{ week: 1, luke: 5 }, { week: 2, luke: 6 }, { week: 20, luke: 9 }, { week: 3, luke: 7 }];
-      expect(actualLinePath(rows, 'luke', 0, 10, xS, yS)).toBe('M10.0,95.0 L20.0,94.0 M30.0,93.0');
-    });
-  });
 
   describe('trendLinePath', () => {
     it('returns "" for a null fit', () => {
