@@ -45,6 +45,17 @@ beforeEach(() => {
 
 const call = (r, e = env) => worker.fetch(r, e);
 
+describe('handler structure', () => {
+  it('delegates GET and PUT to private handlers', () => {
+    const source = readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8');
+    expect(source).toMatch(/const handleGet = async \(env, headers\) =>/);
+    expect(source).toMatch(/const handlePut = async \(request, env, headers\) =>/);
+    expect(source).toMatch(/await handleGet\(env, headers\)/);
+    expect(source).toMatch(/await handlePut\(request, env, headers\)/);
+    expect(source).not.toMatch(/export (?:const|function) handle(?:Get|Put)/);
+  });
+});
+
 describe('routing and CORS', () => {
   it('answers OPTIONS preflight without auth', async () => {
     const r = await call(req('OPTIONS', { key: null }));
