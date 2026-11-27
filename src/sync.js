@@ -35,3 +35,38 @@ export const pushEntries = async (putData, entries, state) => {
     pendingWriteRef.current = false;
   }
 };
+
+// Handles focus / visibility refresh: pushes unflushed local edits if dirty,
+// otherwise fetches the latest remote data and applies it if newer.
+// Skips UI state updates if isCancelled returns true after an await.
+export const refreshFromRemote = async (
+  { fetchData, putData, getEntries, applyRemote, isCancelled },
+  state,
+) => {
+  if (state.pendingWriteRef.current || isCancelled?.()) return;
+  const setSyncStatus = (status) => {
+    if (!isCancelled?.()) {
+      state.setSyncStatus(status);
+    }
+  };
+  if (state.dirtyRef.current) {
+    setSyncStatus("syncing…");
+    await pushEntries(putData, getEntries(), { ...state, setSyncStatus });
+    return;
+  }
+  try {
+    const remote = await fetchData();
+    if (isCancelled?.()) return;
+    if (
+      remote?.updated &&
+      remote.updated !== state.lastSyncedRef.current &&
+      Array.isArray(remote.entries)
+    ) {
+      applyRemote(remote.entries);
+      state.lastSyncedRef.current = remote.updated;
+    }
+    setSyncStatus("synced");
+  } catch {
+    setSyncStatus("offline");
+  }
+};

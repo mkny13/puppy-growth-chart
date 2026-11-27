@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { makeRemote, pushEntries } from "../src/sync.js";
+import { makeRemote, pushEntries, refreshFromRemote } from "../src/sync.js";
 
 const URL_BASE = "https://example.test";
 const ok = (body) => ({ ok: true, status: 200, json: async () => body });
@@ -58,5 +58,164 @@ describe("pushEntries", () => {
     expect(state.setSyncStatus).toHaveBeenLastCalledWith("offline");
     expect(state.dirtyRef.current).toBe(true);
     expect(state.pendingWriteRef.current).toBe(false);
+  });
+});
+
+describe("refreshFromRemote", () => {
+  const mkState = (overrides = {}) => ({
+    lastSyncedRef: { current: null },
+    dirtyRef: { current: false },
+    pendingWriteRef: { current: false },
+    setSyncStatus: vi.fn(),
+    ...overrides,
+  });
+
+  it("does not fetch when a write is pending", async () => {
+    const state = mkState({ pendingWriteRef: { current: true } });
+    const fetchData = vi.fn();
+    const putData = vi.fn();
+    await refreshFromRemote(
+      { fetchData, putData, getEntries: () => [], applyRemote: vi.fn() },
+      state,
+    );
+    expect(fetchData).not.toHaveBeenCalled();
+    expect(putData).not.toHaveBeenCalled();
+    expect(state.setSyncStatus).not.toHaveBeenCalled();
+  });
+
+  it("pushes dirty entries without fetching", async () => {
+    const state = mkState({ dirtyRef: { current: true } });
+    const fetchData = vi.fn();
+    const putData = vi.fn().mockResolvedValue({ updated: "2026-03-01" });
+    const entries = [{ week: 1, luke: 5 }];
+    await refreshFromRemote(
+      { fetchData, putData, getEntries: () => entries, applyRemote: vi.fn() },
+      state,
+    );
+    expect(fetchData).not.toHaveBeenCalled();
+    expect(putData).toHaveBeenCalledWith(entries);
+    expect(state.setSyncStatus).toHaveBeenCalledWith("syncing…");
+    expect(state.setSyncStatus).toHaveBeenLastCalledWith("synced");
+    expect(state.lastSyncedRef.current).toBe("2026-03-01");
+    expect(state.dirtyRef.current).toBe(false);
+  });
+
+  it("applies remote entries and updates lastSynced when remote is newer", async () => {
+    const state = mkState({ lastSyncedRef: { current: "2026-01-01" } });
+    const remoteEntries = [{ week: 1, luke: 6 }];
+    const fetchData = vi.fn().mockResolvedValue({ updated: "2026-01-02", entries: remoteEntries });
+    const applyRemote = vi.fn();
+    await refreshFromRemote(
+      { fetchData, putData: vi.fn(), getEntries: () => [], applyRemote },
+      state,
+    );
+    expect(applyRemote).toHaveBeenCalledWith(remoteEntries);
+    expect(state.lastSyncedRef.current).toBe("2026-01-02");
+    expect(state.setSyncStatus).toHaveBeenCalledWith("synced");
+  });
+
+  it("does not call applyRemote when updated matches lastSynced", async () => {
+    const state = mkState({ lastSyncedRef: { current: "2026-01-01" } });
+    const fetchData = vi.fn().mockResolvedValue({ updated: "2026-01-01", entries: [{ week: 1 }] });
+    const applyRemote = vi.fn();
+    await refreshFromRemote(
+      { fetchData, putData: vi.fn(), getEntries: () => [], applyRemote },
+      state,
+    );
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(state.lastSyncedRef.current).toBe("2026-01-01");
+    expect(state.setSyncStatus).toHaveBeenCalledWith("synced");
+  });
+
+  it("sets status to offline when fetch fails", async () => {
+    const state = mkState();
+    const fetchData = vi.fn().mockRejectedValue(new Error("network error"));
+    const applyRemote = vi.fn();
+    await refreshFromRemote(
+      { fetchData, putData: vi.fn(), getEntries: () => [], applyRemote },
+      state,
+    );
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(state.setSyncStatus).toHaveBeenCalledWith("offline");
+  });
+
+  it("does not update state or call applyRemote when cancelled", async () => {
+    let cancelled = false;
+    const state = mkState({ lastSyncedRef: { current: "2026-01-01" } });
+    const fetchData = vi.fn().mockImplementation(async () => {
+      cancelled = true;
+      return { updated: "2026-01-02", entries: [{ week: 1 }] };
+    });
+    const applyRemote = vi.fn();
+    await refreshFromRemote(
+      {
+        fetchData,
+        putData: vi.fn(),
+        getEntries: () => [],
+        applyRemote,
+        isCancelled: () => cancelled,
+      },
+      state,
+    );
+    expect(applyRemote).not.toHaveBeenCalled();
+    expect(state.lastSyncedRef.current).toBe("2026-01-01");
+    expect(state.setSyncStatus).not.toHaveBeenCalled();
+
+    let rejectCancelled = false;
+    const failingFetch = vi.fn().mockImplementation(async () => {
+      rejectCancelled = true;
+      throw new Error("network error");
+    });
+    await refreshFromRemote(
+      {
+        fetchData: failingFetch,
+        putData: vi.fn(),
+        getEntries: () => [],
+        applyRemote,
+        isCancelled: () => rejectCancelled,
+      },
+      state,
+    );
+    expect(state.setSyncStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not call setSyncStatus when cancelled during dirty push", async () => {
+    let cancelled = false;
+    const state = mkState({ dirtyRef: { current: true } });
+    const putData = vi.fn().mockImplementation(async () => {
+      cancelled = true;
+      return { updated: "2026-03-01" };
+    });
+    await refreshFromRemote(
+      {
+        fetchData: vi.fn(),
+        putData,
+        getEntries: () => [{ week: 1 }],
+        applyRemote: vi.fn(),
+        isCancelled: () => cancelled,
+      },
+      state,
+    );
+    expect(state.setSyncStatus).toHaveBeenCalledWith("syncing…");
+    expect(state.setSyncStatus).not.toHaveBeenCalledWith("synced");
+
+    let rejectCancelled = false;
+    const failingState = mkState({ dirtyRef: { current: true } });
+    const failingPut = vi.fn().mockImplementation(async () => {
+      rejectCancelled = true;
+      throw new Error("network error");
+    });
+    await refreshFromRemote(
+      {
+        fetchData: vi.fn(),
+        putData: failingPut,
+        getEntries: () => [{ week: 1 }],
+        applyRemote: vi.fn(),
+        isCancelled: () => rejectCancelled,
+      },
+      failingState,
+    );
+    expect(failingState.setSyncStatus).toHaveBeenCalledWith("syncing…");
+    expect(failingState.setSyncStatus).not.toHaveBeenCalledWith("offline");
   });
 });
