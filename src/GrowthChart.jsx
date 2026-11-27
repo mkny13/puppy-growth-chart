@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { makeRemote, pushEntries } from "./sync.js";
+import { makeRemote, pushEntries, refreshFromRemote } from "./sync.js";
 import {
   X_ABS_MIN, X_ABS_MAX, VW, VH, PL, PT, CW, CH,
   SEED_ACTUAL, X_TICKS_ALL, dateToWeek, weekToDate, fmtDateLocal, fmtShort,
@@ -181,28 +181,21 @@ export default function GrowthChart() {
   // If we have an unflushed local change, push it first.
   useEffect(() => {
     if (!SYNC_ENABLED) return;
-    const refresh = async () => {
-      if (pendingWriteRef.current) return;
-      if (dirtyRef.current) {
-        setSyncStatus("syncing…");
-        await pushEntries(remotePut, actualRef.current, syncState);
-        return;
-      }
-      try {
-        const remote = await remoteFetch();
-        if (
-          remote.updated &&
-          remote.updated !== lastSyncedRef.current &&
-          Array.isArray(remote.entries)
-        ) {
-          skipNextSaveRef.current = true;
-          setActual(remote.entries);
-          lastSyncedRef.current = remote.updated;
-        }
-        setSyncStatus("synced");
-      } catch {
-        setSyncStatus("offline");
-      }
+    let cancelled = false;
+    const refresh = () => {
+      refreshFromRemote(
+        {
+          fetchData: remoteFetch,
+          putData: remotePut,
+          getEntries: () => actualRef.current,
+          applyRemote: (e) => {
+            skipNextSaveRef.current = true;
+            setActual(e);
+          },
+          isCancelled: () => cancelled,
+        },
+        syncState,
+      );
     };
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
@@ -210,6 +203,7 @@ export default function GrowthChart() {
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVis);
     return () => {
+      cancelled = true;
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVis);
     };
