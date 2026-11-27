@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { makeRemote, pushEntries, refreshFromRemote } from "./sync.js";
 import {
   X_ABS_MIN, X_ABS_MAX, VW, VH, PL, PT, CW, CH,
@@ -114,7 +114,10 @@ export default function GrowthChart() {
   const dirtyRef = useRef(false); // local state has unflushed edits
   const saveTimerRef = useRef(null);
   const actualRef = useRef(actual); // always-current snapshot for async handlers
-  const syncState = { lastSyncedRef, dirtyRef, pendingWriteRef, setSyncStatus };
+  const syncState = useMemo(
+    () => ({ lastSyncedRef, dirtyRef, pendingWriteRef, setSyncStatus }),
+    [],
+  );
 
   // Don't leave the save debounce or tooltip timers running after unmount.
   useEffect(
@@ -150,7 +153,7 @@ export default function GrowthChart() {
     saveTimerRef.current = setTimeout(() => {
       pushEntries(remotePut, actualRef.current, syncState);
     }, 500);
-  }, [actual]);
+  }, [actual, syncState]);
 
   // Initial remote load — remote wins on hydration, so devices converge on the shared truth.
   useEffect(() => {
@@ -207,7 +210,7 @@ export default function GrowthChart() {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, []);
+  }, [syncState]);
 
   useEffect(() => {
     localStorage.setItem(COLOR_PREF_KEY, colorPref);
@@ -956,9 +959,9 @@ export default function GrowthChart() {
           </div>
         ))}
         {[
-          { dog: "luke", color: LUKE, txtColor: t.lukeTxt, label: "Luke" },
-          { dog: "leia", color: LEIA, txtColor: t.leiaTxt, label: "Leia" },
-        ].map(({ dog, color, txtColor, label }) => {
+          { dog: "luke", color: LUKE, label: "Luke" },
+          { dog: "leia", color: LEIA, label: "Leia" },
+        ].map(({ dog, color, label }) => {
           const fit = dogFits[dog];
           const range = dogRange[dog];
           return (
