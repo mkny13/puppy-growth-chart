@@ -43,10 +43,15 @@ export const refreshFromRemote = async (
   { fetchData, putData, getEntries, applyRemote, isCancelled },
   state,
 ) => {
-  if (state.pendingWriteRef.current) return;
+  if (state.pendingWriteRef.current || isCancelled?.()) return;
+  const setSyncStatus = (status) => {
+    if (!isCancelled?.()) {
+      state.setSyncStatus(status);
+    }
+  };
   if (state.dirtyRef.current) {
-    state.setSyncStatus("syncing…");
-    await pushEntries(putData, getEntries(), state);
+    setSyncStatus("syncing…");
+    await pushEntries(putData, getEntries(), { ...state, setSyncStatus });
     return;
   }
   try {
@@ -60,10 +65,8 @@ export const refreshFromRemote = async (
       applyRemote(remote.entries);
       state.lastSyncedRef.current = remote.updated;
     }
-    state.setSyncStatus("synced");
+    setSyncStatus("synced");
   } catch {
-    if (!isCancelled?.()) {
-      state.setSyncStatus("offline");
-    }
+    setSyncStatus("offline");
   }
 };

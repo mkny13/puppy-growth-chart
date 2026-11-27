@@ -178,4 +178,44 @@ describe("refreshFromRemote", () => {
     );
     expect(state.setSyncStatus).not.toHaveBeenCalled();
   });
+
+  it("does not call setSyncStatus when cancelled during dirty push", async () => {
+    let cancelled = false;
+    const state = mkState({ dirtyRef: { current: true } });
+    const putData = vi.fn().mockImplementation(async () => {
+      cancelled = true;
+      return { updated: "2026-03-01" };
+    });
+    await refreshFromRemote(
+      {
+        fetchData: vi.fn(),
+        putData,
+        getEntries: () => [{ week: 1 }],
+        applyRemote: vi.fn(),
+        isCancelled: () => cancelled,
+      },
+      state,
+    );
+    expect(state.setSyncStatus).toHaveBeenCalledWith("syncing…");
+    expect(state.setSyncStatus).not.toHaveBeenCalledWith("synced");
+
+    let rejectCancelled = false;
+    const failingState = mkState({ dirtyRef: { current: true } });
+    const failingPut = vi.fn().mockImplementation(async () => {
+      rejectCancelled = true;
+      throw new Error("network error");
+    });
+    await refreshFromRemote(
+      {
+        fetchData: vi.fn(),
+        putData: failingPut,
+        getEntries: () => [{ week: 1 }],
+        applyRemote: vi.fn(),
+        isCancelled: () => rejectCancelled,
+      },
+      failingState,
+    );
+    expect(failingState.setSyncStatus).toHaveBeenCalledWith("syncing…");
+    expect(failingState.setSyncStatus).not.toHaveBeenCalledWith("offline");
+  });
 });
