@@ -147,6 +147,35 @@ const putData = async (env, body, sha) => {
   return { conflict: false, payload };
 };
 
+const handleGet = async (env, headers) => {
+  const { data } = await fetchData(env);
+  const payload = data || { version: 1, updated: null, entries: [] };
+  return json(payload, 200, headers);
+};
+
+const handlePut = async (request, env, headers) => {
+  let body;
+  try { body = await request.json(); }
+  catch { return json({ error: 'invalid json' }, 400, headers); }
+  const err = validateBody(body);
+  if (err) return json({ error: err }, 400, headers);
+
+  let lastConflictPayload = null;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const { sha } = await fetchData(env);
+    const result = await putData(env, body, sha);
+    if (!result.conflict) {
+      return json(result.payload, 200, headers);
+    }
+    lastConflictPayload = result.payload;
+  }
+  return json(
+    { error: 'conflict', message: 'concurrent writes; please retry', payload: lastConflictPayload },
+    409,
+    headers,
+  );
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -169,36 +198,16 @@ export default {
     }
 
     try {
+      const headers = corsHeaders(auth.origin);
       if (request.method === 'GET') {
-        const { data } = await fetchData(env);
-        const payload = data || { version: 1, updated: null, entries: [] };
-        return json(payload, 200, corsHeaders(auth.origin));
+        return await handleGet(env, headers);
       }
 
       if (request.method === 'PUT') {
-        let body;
-        try { body = await request.json(); }
-        catch { return json({ error: 'invalid json' }, 400, corsHeaders(auth.origin)); }
-        const err = validateBody(body);
-        if (err) return json({ error: err }, 400, corsHeaders(auth.origin));
-
-        let lastConflictPayload = null;
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const { sha } = await fetchData(env);
-          const result = await putData(env, body, sha);
-          if (!result.conflict) {
-            return json(result.payload, 200, corsHeaders(auth.origin));
-          }
-          lastConflictPayload = result.payload;
-        }
-        return json(
-          { error: 'conflict', message: 'concurrent writes; please retry', payload: lastConflictPayload },
-          409,
-          corsHeaders(auth.origin),
-        );
+        return await handlePut(request, env, headers);
       }
 
-      return json({ error: 'method not allowed' }, 405, corsHeaders(auth.origin));
+      return json({ error: 'method not allowed' }, 405, headers);
     } catch (e) {
       console.error('upstream error:', String(e?.message || e));
       return json({ error: 'upstream' }, 502, corsHeaders(auth.origin));
