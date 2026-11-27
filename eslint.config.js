@@ -20,8 +20,14 @@ export default [
       ...reactHooks.configs.recommended.rules,
       'react/prop-types': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
-      // Pre-existing dead code (actualLinePath, txtColor): reported, not blocking.
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'error',
+    },
+  },
+  {
+    files: ['src/growth.js', 'src/sync.js', 'worker/src/**/*.js'],
+    rules: {
+      // snapTooltip in src/growth.js has complexity 20; validateBody in worker/src/index.js has 18.
+      complexity: ['error', 20],
     },
   },
   {

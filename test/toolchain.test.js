@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import eslintConfig from '../eslint.config.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -62,5 +63,35 @@ describe('eslint-plugin-react peer range vs project ESLint', () => {
     })();
 
     expect(supportsEslint10, 'eslint-plugin-react now supports ESLint 10: remove the `overrides` entry from package.json and run npm install').toBe(false);
+  });
+});
+
+describe('ESLint configuration: no-unused-vars and complexity rules (issue #85)', () => {
+  it('enforces no-unused-vars as error for src files and contains no stale dead-code comment', async () => {
+    const configContent = await readFile(resolve(repoRoot, 'eslint.config.js'), 'utf8');
+    expect(configContent).not.toContain('actualLinePath');
+
+    const srcConfig = eslintConfig.find(
+      (c) => c.files && c.files.some((f) => f.includes('src/')),
+    );
+    expect(srcConfig?.rules?.['no-unused-vars']).toBe('error');
+  });
+
+  it('enforces complexity as error for growth, sync, and worker files with an explanatory comment', async () => {
+    const configContent = await readFile(resolve(repoRoot, 'eslint.config.js'), 'utf8');
+    expect(configContent).toMatch(/snapTooltip/);
+
+    const complexityConfig = eslintConfig.find(
+      (c) => c.rules && c.rules.complexity,
+    );
+    expect(complexityConfig).toBeDefined();
+    expect(complexityConfig.files).toEqual(
+      expect.arrayContaining(['src/growth.js', 'src/sync.js']),
+    );
+    const rule = complexityConfig.rules.complexity;
+    const severity = Array.isArray(rule) ? rule[0] : rule;
+    const threshold = Array.isArray(rule) ? rule[1] : undefined;
+    expect(severity).toBe('error');
+    expect(threshold).toBeLessThanOrEqual(20);
   });
 });
